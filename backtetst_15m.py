@@ -19,6 +19,7 @@ def load_csv_and_add_indicators(csv_file):
     print(f"Tổng số nến: {len(df)}")
     print("Thời gian đầu:", df['timestamp'].iloc[0])
     print("Thời gian cuối:", df['timestamp'].iloc[-1])
+
     df.sort_values("timestamp", inplace=True)
     df["timestamp"] = pd.to_datetime(df["timestamp"], utc=True)
 
@@ -39,7 +40,6 @@ def load_csv_and_add_indicators(csv_file):
     # ADX
     adx = ADXIndicator(df["high"], df["low"], df["close"], window=14)
     df["adx"] = adx.adx()
-
     df.dropna(inplace=True)
     return df
 
@@ -68,10 +68,10 @@ def backtest_ai_strategy(model, scaler, data, initial_balance=5000):
             "close", "sma", "ema", "macd", "macd_signal", "macd_diff",
             "rsi", "bb_bbm", "bb_bbh", "bb_bbl", "atr", "adx"
         ]])
-        last_sequence = last_sequence.reshape(1, LOOKBACK, 12)  # ✅ thêm dòng này
         dummy = np.zeros((1, 12))  # 12 features
 
         # Dự đoán (scaled)
+        last_sequence = last_sequence.reshape(1, LOOKBACK, 12)  # ✅ Sửa lỗi shape
         scaled_pred = model.predict(last_sequence, verbose=0)[0][0]
 
         # Tạo dummy row để inverse transform
@@ -98,6 +98,7 @@ def backtest_ai_strategy(model, scaler, data, initial_balance=5000):
         volume_ok = data.iloc[i]["volume"] > data.iloc[i - 1]["volume"] * 1.2
         price_near_bottom = current_price <= data.iloc[i - 20:i]["close"].min() * 1.05
         adx_ok = data.iloc[i]["adx"] > 20
+
         buy_condition = (
                 ai_confidence and macd_bullish and rsi_ok
                 and volume_ok and price_near_bottom and adx_ok

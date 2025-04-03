@@ -23,8 +23,8 @@ if TESTNET_MODE:
     API_KEY = "BIpG5vVt41fsIEUcQe"
     API_SECRET = "pVfG0mafX1ey8clN6quZqTI4EZvkrQgeoziX"
     testnet = True
-    model_file = "models/testnet/ai15m_model.keras"  # Model riêng cho Testnet
-    data_file = "data/testnet/data15m.json"  # Dữ liệu riêng cho Testnet
+    model_file = "models/testnet/ai_model.keras"  # Model riêng cho Testnet
+    data_file = "data/testnet/data.json"  # Dữ liệu riêng cho Testnet
 else:
     API_KEY = "Hm5gG0HKbm5MDo5bpo"
     API_SECRET = "D6iP8YwCisA8pUylvh6916rnvWxoyKQnq1jp"
@@ -42,7 +42,7 @@ session = HTTP(api_key=API_KEY, api_secret=API_SECRET, testnet=testnet)
 
 #
 # ===== HÀM LẤY DỮ LIỆU GIÁ VÀ TÍNH INDICATORS =====
-def fetch_data_with_indicators(symbol="BTCUSDT", timeframe="15", limit=12000, retry_attempts=5):
+def fetch_data_with_indicators(symbol="BTCUSDT", timeframe="15", limit=5000, retry_attempts=5):
     for attempt in range(retry_attempts):
         try:
             response = session.get_kline(category="spot", symbol=symbol, interval=timeframe, limit=limit)
@@ -76,18 +76,11 @@ def fetch_data_with_indicators(symbol="BTCUSDT", timeframe="15", limit=12000, re
 
             atr = ta.volatility.AverageTrueRange(df["high"], df["low"], df["close"], window=14)
             df["atr"] = atr.average_true_range()
+
             # ADX
             adx = ADXIndicator(df["high"], df["low"], df["close"], window=14)
             df["adx"] = adx.adx()
 
-            # DMI
-            df["plus_di"] = adx.adx_pos()
-            df["minus_di"] = adx.adx_neg()
-
-            # Candle body và wick (để phát hiện nến rút chân)
-            df["candle_body"] = abs(df["close"] - df["open"])
-            df["lower_wick"] = np.where(df["close"] > df["open"], df["open"] - df["low"], df["close"] - df["low"])
-            df["lower_wick"] = abs(df["lower_wick"])
             df.dropna(inplace=True)
             time.sleep(1)  # Nghỉ 1s tránh spam API
             return df
@@ -126,9 +119,9 @@ def train_lstm_model(df):
 
     model = Sequential()
     model.add(Input(shape=(LOOKBACK, len(feature_cols))))
-    model.add(LSTM(128, return_sequences=True))
+    model.add(LSTM(50, return_sequences=True))
     model.add(Dropout(0.2))
-    model.add(LSTM(128))
+    model.add(LSTM(50))
     model.add(Dropout(0.2))
     model.add(Dense(1))
     model.compile(optimizer='adam', loss='mean_squared_error')
