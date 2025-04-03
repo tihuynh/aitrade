@@ -40,14 +40,6 @@ def load_csv_and_add_indicators(csv_file):
     adx = ADXIndicator(df["high"], df["low"], df["close"], window=14)
     df["adx"] = adx.adx()
 
-    # DMI
-    df["plus_di"] = adx.adx_pos()
-    df["minus_di"] = adx.adx_neg()
-
-    # Candle body và wick (để phát hiện nến rút chân)
-    df["candle_body"] = abs(df["close"] - df["open"])
-    df["lower_wick"] = np.where(df["close"] > df["open"], df["open"] - df["low"], df["close"] - df["low"])
-    df["lower_wick"] = abs(df["lower_wick"])
     df.dropna(inplace=True)
     return df
 
@@ -74,17 +66,16 @@ def backtest_ai_strategy(model, scaler, data, initial_balance=5000):
         window = data.iloc[i - LOOKBACK:i]
         last_sequence = scaler.transform(window[[  # Thêm "adx"
             "close", "sma", "ema", "macd", "macd_signal", "macd_diff",
-            "rsi", "bb_bbm", "bb_bbh", "bb_bbl", "atr", "adx",
-            "plus_di", "minus_di", "candle_body", "lower_wick"
+            "rsi", "bb_bbm", "bb_bbh", "bb_bbl", "atr", "adx"
         ]])
-        last_sequence = last_sequence.reshape(1, LOOKBACK, 16)  # ✅ thêm dòng này
-        dummy = np.zeros((1, 16))  # 16 features
+        last_sequence = last_sequence.reshape(1, LOOKBACK, 12)  # ✅ thêm dòng này
+        dummy = np.zeros((1, 12))  # 12 features
 
         # Dự đoán (scaled)
         scaled_pred = model.predict(last_sequence, verbose=0)[0][0]
 
         # Tạo dummy row để inverse transform
-        dummy = np.zeros((1, 16))  # 16 là số feature
+        dummy = np.zeros((1, 12))  # 12 là số feature
         dummy[0][0] = scaled_pred
         prediction = scaler.inverse_transform(dummy)[0][0]
 
@@ -107,47 +98,10 @@ def backtest_ai_strategy(model, scaler, data, initial_balance=5000):
         volume_ok = data.iloc[i]["volume"] > data.iloc[i - 1]["volume"] * 1.2
         price_near_bottom = current_price <= data.iloc[i - 20:i]["close"].min() * 1.05
         adx_ok = data.iloc[i]["adx"] > 20
-
-        sma_val = data.iloc[i]["sma"]
-        ema_val = data.iloc[i]["ema"]
-        plus_di = data.iloc[i]["plus_di"]
-        minus_di = data.iloc[i]["minus_di"]
-
-        # SMA cắt lên EMA (momentum tăng)
-        sma_cross_ema = sma_val > ema_val and data.iloc[i - 1]["sma"] <= data.iloc[i - 1]["ema"]
-
-        # ADX trend mạnh & bullish
-        trend_strong = data.iloc[i]["adx"] > 25 and plus_di > minus_di
-
-        # RSI breakout từ vùng quá bán
-        rsi_breakout = data.iloc[i - 1]["rsi"] < 40 and data.iloc[i]["rsi"] >= 40
-
-        # Chặn nếu là nến rút chân dài → có thể đảo chiều giảm
-        lower_wick = data.iloc[i]["lower_wick"]
-        body = data.iloc[i]["candle_body"]
-        is_reversal_candle = lower_wick > body * 2
-
-        score = 0
-        # AI dự đoán phải là tăng giá thì mới xét tiếp
-        if ai_confidence:
-            score = 0
-            if macd_bullish: score += 1
-            if rsi_ok: score += 1
-            if volume_ok: score += 1
-            if price_near_bottom: score += 1
-            if adx_ok: score += 1
-            if sma_cross_ema: score += 1
-            if trend_strong: score += 1
-            if rsi_breakout: score += 1
-            if not is_reversal_candle: score += 1
-
-            buy_condition = score >= 6  # có thể chỉnh 5-7 tùy độ gắt
-
-        else:
-            buy_condition = False
-
-        # Nếu đạt >= 6/10 điểm thì mua
-        buy_condition = score >= 6
+        buy_condition = (
+                ai_confidence and macd_bullish and rsi_ok
+                and volume_ok and price_near_bottom and adx_ok
+        )
 
         # print(f"[DEBUG] AI ok: {ai_confidence}, MACD: {macd_bullish}, RSI: {rsi_ok}, EMA: {price_above_ema}")
 
@@ -228,8 +182,7 @@ if __name__ == "__main__":
     scaler = MinMaxScaler()
     scaler.fit(df[[
         "close", "sma", "ema", "macd", "macd_signal", "macd_diff",
-        "rsi", "bb_bbm", "bb_bbh", "bb_bbl", "atr", "adx",
-        "plus_di", "minus_di", "candle_body", "lower_wick"
+        "rsi", "bb_bbm", "bb_bbh", "bb_bbl", "atr", "adx"
     ]])
 
     model = load_model(model_path)

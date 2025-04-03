@@ -104,8 +104,7 @@ def fetch_data_with_indicators(symbol="BTCUSDT", timeframe="15", limit=12000, re
 def train_lstm_model(df):
     feature_cols = [
         "close", "sma", "ema", "macd", "macd_signal",
-        "macd_diff", "rsi", "bb_bbm", "bb_bbh", "bb_bbl", "atr", "adx",
-        "plus_di", "minus_di", "candle_body", "lower_wick"
+        "macd_diff", "rsi", "bb_bbm", "bb_bbh", "bb_bbl", "atr", "adx"
     ]
 
     # Chuẩn hóa dữ liệu
@@ -181,8 +180,7 @@ def validate_data(data):
 def get_model():
     feature_cols = [
         "close", "sma", "ema", "macd", "macd_signal",
-        "macd_diff", "rsi", "bb_bbm", "bb_bbh", "bb_bbl", "atr", "adx",
-        "plus_di", "minus_di", "candle_body", "lower_wick"
+        "macd_diff", "rsi", "bb_bbm", "bb_bbh", "bb_bbl", "atr", "adx"
     ]
     LOOKBACK = 100
 
@@ -225,8 +223,7 @@ def get_model():
 def predict_price(model, scaler, df):
     feature_cols = [
         "close", "sma", "ema", "macd", "macd_signal",
-        "macd_diff", "rsi", "bb_bbm", "bb_bbh", "bb_bbl", "atr", "adx",
-        "plus_di", "minus_di", "candle_body", "lower_wick"
+        "macd_diff", "rsi", "bb_bbm", "bb_bbh", "bb_bbl", "atr", "adx"
     ]
 
     LOOKBACK = 100  # phải khớp với lúc train
