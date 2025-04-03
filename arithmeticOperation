@@ -1,0 +1,32 @@
+# x=10
+# print(10/3)
+# print(10//3)
+# x +=3
+# print(x)
+
+# Operator Precedence
+# x = 10 + 3 * 2
+# y = 2 ** 2
+# z = (2+3) * 10 - 3
+# print(x)
+# print(y)
+# print(z)
+
+# Comparaison
+# x = 3 == 2
+# y = 3 > 2
+# print (y)
+# print(x)
+
+# Logical Operator and or not
+x = 20
+print (x<10 and x<30 )
+print (x<10 or x<30 )
+print (x<10)
+print (not x<10)
+
+# Math Functions
+# Refer document google search "math function in python 3"
+# import math
+# x = -2.9
+# print(math.fabs(x))

@@ -1,0 +1,4 @@
+name = input("what's your name: ")
+age = input("how old are u: ")
+vision = input("what are u looking for: ")
+print("Hello " + name + " your age is " + age + " and you looking for " + vision + " hope u get your target soon")
