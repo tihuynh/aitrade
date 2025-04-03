@@ -39,10 +39,15 @@ os.makedirs(os.path.dirname(data_file), exist_ok=True)
 # ===== KẾT NỐI API BYBIT =====
 session = HTTP(api_key=API_KEY, api_secret=API_SECRET, testnet=testnet)
 
+# ===== SET SEED FIXED =====
+def set_global_seed(seed: int = 42):
+    np.random.seed(seed)
+    random.seed(seed)
+    tf.random.set_seed(seed)
 
 #
 # ===== HÀM LẤY DỮ LIỆU GIÁ VÀ TÍNH INDICATORS =====
-def fetch_data_with_indicators(symbol="BTCUSDT", timeframe="15", limit=5000, retry_attempts=5):
+def fetch_data_with_indicators(symbol="BTCUSDT", timeframe="15", limit=12000, retry_attempts=5):
     for attempt in range(retry_attempts):
         try:
             response = session.get_kline(category="spot", symbol=symbol, interval=timeframe, limit=limit)
@@ -94,7 +99,11 @@ def fetch_data_with_indicators(symbol="BTCUSDT", timeframe="15", limit=5000, ret
 
 
 # ===== HÀM HUẤN LUYỆN MÔ HÌNH LSTM =====
-def train_lstm_model(df):
+# Nếu muốn mỗi lần huấn luyện ra kết quả ngẫu nhiên khác nhau, hãy dùng fix_seed=False.
+# Mặc định đang bật fix_seed=True để tránh sai số do ngẫu nhiên.
+def train_lstm_model(df, fix_seed=True):
+    if fix_seed:
+        set_global_seed(42)
     feature_cols = [
         "close", "sma", "ema", "macd", "macd_signal",
         "macd_diff", "rsi", "bb_bbm", "bb_bbh", "bb_bbl", "atr", "adx"

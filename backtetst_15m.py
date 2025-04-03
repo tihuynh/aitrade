@@ -5,6 +5,8 @@ from tensorflow.keras.models import load_model
 from sklearn.preprocessing import MinMaxScaler
 import ta
 from ta.trend import ADXIndicator
+import shutil
+import datetime
 
 
 # ====== LOAD CSV + THÊM INDICATORS ======
@@ -19,7 +21,6 @@ def load_csv_and_add_indicators(csv_file):
     print(f"Tổng số nến: {len(df)}")
     print("Thời gian đầu:", df['timestamp'].iloc[0])
     print("Thời gian cuối:", df['timestamp'].iloc[-1])
-
     df.sort_values("timestamp", inplace=True)
     df["timestamp"] = pd.to_datetime(df["timestamp"], utc=True)
 
@@ -160,6 +161,7 @@ def backtest_ai_strategy(model, scaler, data, initial_balance=5000):
     print(f"⛔ Lệnh thua: {loss_count}")
     win_rate = (win_count / (win_count + loss_count)) * 100 if (win_count + loss_count) > 0 else 0
     print(f"🎯 Tỷ lệ thắng: {win_rate:.2f}%")
+    backup_model_if_good(winrate, final_balance)
 
     # XUẤT LOG RA FILE CSV
     import os
@@ -172,6 +174,14 @@ def backtest_ai_strategy(model, scaler, data, initial_balance=5000):
     print("\n🧾 Chi tiết giao dịch:")
     for log in trade_log:
         print(log)
+
+def backup_model_if_good(winrate, balance, threshold_winrate=70, threshold_balance=5200):
+    if winrate >= threshold_winrate or balance >= threshold_balance:
+        timestamp = datetime.datetime.now().strftime("%Y%m%d_%H%M%S")
+        backup_dir = f"models/backup/win{int(winrate)}_{threshold_balance}_{timestamp}"
+        os.makedirs(backup_dir, exist_ok=True)
+        shutil.copy(model_file, os.path.join(backup_dir, "model.keras"))
+        print(f"💾 Đã backup model với winrate {winrate:.2f}% tại {backup_dir}")
 
 
 # ====== CHẠY BACKTEST ======
