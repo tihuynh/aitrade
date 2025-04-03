@@ -127,13 +127,27 @@ def backtest_ai_strategy(model, scaler, data, initial_balance=5000):
         body = data.iloc[i]["candle_body"]
         is_reversal_candle = lower_wick > body * 2
 
+        score = 0
+        # AI dự đoán phải là tăng giá thì mới xét tiếp
+        if ai_confidence:
+            score = 0
+            if macd_bullish: score += 1
+            if rsi_ok: score += 1
+            if volume_ok: score += 1
+            if price_near_bottom: score += 1
+            if adx_ok: score += 1
+            if sma_cross_ema: score += 1
+            if trend_strong: score += 1
+            if rsi_breakout: score += 1
+            if not is_reversal_candle: score += 1
 
-        buy_condition = (
-                ai_confidence and macd_bullish and rsi_ok
-                and volume_ok and price_near_bottom and adx_ok
-                and sma_cross_ema and trend_strong and rsi_breakout
-                and not is_reversal_candle  # Loại bỏ nến rút chân dài
-        )
+            buy_condition = score >= 6  # có thể chỉnh 5-7 tùy độ gắt
+
+        else:
+            buy_condition = False
+
+        # Nếu đạt >= 6/10 điểm thì mua
+        buy_condition = score >= 6
 
         # print(f"[DEBUG] AI ok: {ai_confidence}, MACD: {macd_bullish}, RSI: {rsi_ok}, EMA: {price_above_ema}")
 
