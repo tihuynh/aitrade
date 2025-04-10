@@ -54,6 +54,15 @@ def get_latest_candle():
     for col in ["open", "high", "low", "close", "volume"]:
         df[col] = df[col].astype(float)
     return df
+def get_current_price():
+    url = "https://api.bybit.com/v5/market/tickers"
+    params = {
+        "category": "spot",
+        "symbol": "BTCUSDT"
+    }
+    response = requests.get(url, params=params, timeout=10)
+    data = response.json()["result"]["list"][0]
+    return float(data["lastPrice"])
 
 # ============================
 # Thêm indicators vào dataframe
@@ -170,7 +179,9 @@ def paper_trading():
     predicted_close = scaler.inverse_transform([dummy])[0][0]
     print(f"[DEBUG] Giá dự đoán sau inverse transform: {predicted_close}")
 
-    current_price = df["close"].iloc[-1]
+    # current_price = df["close"].iloc[-1]
+    current_price = get_current_price()
+    print(f"[DEBUG] Real-time current price: {current_price}")
     atr = df["atr"].iloc[-1]
 
     signal_buy = predicted_close > current_price * 1.001
