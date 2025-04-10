@@ -6,7 +6,7 @@ session = HTTP()
 symbol = "BTCUSDT"
 interval = "15"
 limit_per_request = 1000
-total_needed = 12000
+total_needed = 30000
 data = []
 
 print("⏳ Đang tải dữ liệu...")
