@@ -12,6 +12,7 @@ import ta
 import matplotlib.pyplot as plt
 import random
 import tensorflow as tf
+import joblib
 from tensorflow.keras.models import Sequential
 from tensorflow.keras.layers import LSTM, Dense, Input, Dropout
 from tensorflow.keras.callbacks import EarlyStopping
@@ -85,7 +86,9 @@ def train_model(df, lookback=100):
     feature_cols = ["close", "sma", "ema", "macd", "macd_signal", "macd_diff", "rsi", "bb_bbm", "bb_bbh", "bb_bbl", "atr", "adx"]
     scaler = MinMaxScaler()
     scaled_data = scaler.fit_transform(df[feature_cols])
-
+    # ✅ Lưu scaler
+    joblib.dump(scaler, 'models/backup/scaler.pkl')
+    print("✅ Scaler đã lưu tại models_backup/scaler.pkl")
     X, y = [], []
     for i in range(lookback, len(scaled_data)):
         X.append(scaled_data[i - lookback:i])
@@ -178,7 +181,7 @@ def backtest_strategy(model, scaler, df, initial_balance=5000, lookback=100):
 
     pd.DataFrame(trade_log).to_csv("backtest_results/trade_log.csv", index=False, encoding="utf-8-sig")
 
-    if balance >= 5200:
+    if balance >= 5500:
         timestamp = datetime.datetime.now().strftime("%Y%m%d_%H%M%S")
         backup_dir = f"models/backup/balance{int(balance)}_{timestamp}"
         os.makedirs(backup_dir, exist_ok=True)

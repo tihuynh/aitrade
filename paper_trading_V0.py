@@ -1,5 +1,5 @@
 # ============================
-# Paper Trading BTCUSDT - 15 phút, Full Auto - VPS Version (Không reset balance) - Final ✅
+# Paper Trading BTCUSDT - 15 phút, Full Auto - VPS Version (Không reset balance)
 # ============================
 
 import os
@@ -9,6 +9,7 @@ import pandas as pd
 import ta
 import time
 import requests
+import joblib  # Thêm thư viện để load scaler
 from tensorflow.keras.models import load_model
 from sklearn.preprocessing import MinMaxScaler
 from ta.trend import SMAIndicator, EMAIndicator, MACD, ADXIndicator
@@ -29,16 +30,11 @@ os.makedirs("logs", exist_ok=True)
 model_path = "models_backup/model.keras"  # Model tốt nhất
 log_file = "logs/paper_log.csv"
 
-# Tạo file log nếu chưa có, thêm header
-if not os.path.exists(log_file):
-    with open(log_file, "w") as f:
-        f.write("timestamp,action,price,balance\n")
-
 # ============================
 # Load mô hình và scaler
 # ============================
 model = load_model(model_path)
-scaler = MinMaxScaler()  # Fit sau khi lấy dữ liệu mới
+scaler = MinMaxScaler()  # Sẽ fit sau khi lấy dữ liệu mới
 
 # ============================
 # Kết nối Bybit API Public để lấy giá
@@ -49,7 +45,7 @@ def get_latest_candle():
         "category": "spot",
         "symbol": "BTCUSDT",
         "interval": "15",
-        "limit": 1000
+        "limit": 500
     }
     response = requests.get(url, params=params, timeout=10)
     data = response.json()["result"]["list"]
@@ -89,7 +85,7 @@ buy_price = 0
 take_profit = 0
 stop_loss = 0
 
-# Khôi phục balance từ log cũ nếu có
+# Nếu log cũ đã có balance thì load balance cuối cùng
 if os.path.exists(log_file):
     try:
         df_log = pd.read_csv(log_file)
@@ -110,13 +106,12 @@ def send_telegram(message):
     except:
         print("⚠️ Lỗi gửi Telegram!")
 
-# Gửi file log về Telegram kèm caption
+# Gửi file log về Telegram
 def send_log_file():
     url = f"https://api.telegram.org/bot{TELEGRAM_TOKEN}/sendDocument"
-    caption = f"📝 Log Paper Trading {datetime.datetime.now(timezone('UTC')).strftime('%Y-%m-%d')}"
     with open(log_file, "rb") as f:
         files = {"document": f}
-        data = {"chat_id": TELEGRAM_CHAT_ID, "caption": caption}
+        data = {"chat_id": TELEGRAM_CHAT_ID}
         try:
             requests.post(url, files=files, data=data, timeout=30)
         except:
@@ -140,19 +135,48 @@ def paper_trading():
     df = add_indicators(df)
 
     feature_cols = ["close", "sma", "ema", "macd", "macd_signal", "macd_diff", "rsi", "bb_bbm", "bb_bbh", "bb_bbl", "atr", "adx"]
-    scaler.fit(df[feature_cols])
-    last_sequence = scaler.transform(df[feature_cols].iloc[-100:]).reshape(1, 100, len(feature_cols))
+    # scaler.fit(df[feature_cols])
+    # Load scaler đã fit từ lúc train model
+    print(f"[DEBUG] Feature DataFrame shape: {df[feature_cols].shape}")
+    print(f"[DEBUG] Feature Columns: {df[feature_cols].columns.tolist()}")
+    print(f"[DEBUG] Last sequence data: {df[feature_cols].iloc[-5:]}")
 
-    predicted_close = model.predict(last_sequence, verbose=0)[0][0]
-    dummy = np.zeros((1, len(feature_cols)))
-    dummy[0][0] = predicted_close
-    predicted_close = scaler.inverse_transform(dummy)[0][0]
+    scaler = joblib.load("models_backup/scaler.pkl")
+    print(f"🔍 Scaler loaded: data min {scaler.data_min_} / data max {scaler.data_max_}")
+    # if df.shape[0] < 100:
+    #     print(f"[WARNING] Data quá ít: {df.shape[0]} rows, cần ít nhất 100.")
+    # else:
+    #     last_sequence = scaler.transform(df[feature_cols].iloc[-100:]).reshape(1, 100, len(feature_cols))
+    #
+    # predicted_close = model.predict(last_sequence, verbose=0)[0][0]
+    # print(f"[DEBUG] Giá dự đoán: {predicted_close}")
+    # dummy = np.zeros((1, len(feature_cols)))
+    # dummy[0][0] = predicted_close
+    # predicted_close = scaler.inverse_transform(dummy)[0][0]
+    # Chuẩn bị last_sequence
+    last_sequence = scaler.transform(df[feature_cols].iloc[-100:])
+    last_sequence = last_sequence.reshape(1, 100, len(feature_cols))
+
+    # Dự đoán
+    predicted_scaled = model.predict(last_sequence, verbose=0)[0][0]
+
+    # Để inverse transform đúng, bạn cần copy hàng cuối cùng từ last_sequence flatten ra
+    dummy = last_sequence.copy().reshape(100, len(feature_cols))[-1]  # Lấy step cuối
+
+    # Thay giá trị cột close bằng giá trị dự đoán
+    dummy[0] = predicted_scaled  # Cột close là index 0
+
+    # Inverse transform
+    predicted_close = scaler.inverse_transform([dummy])[0][0]
+    print(f"[DEBUG] Giá dự đoán sau inverse transform: {predicted_close}")
 
     current_price = df["close"].iloc[-1]
     atr = df["atr"].iloc[-1]
 
     signal_buy = predicted_close > current_price * 1.001
     signal_sell = position == 1 and (current_price >= take_profit or current_price <= stop_loss)
+    print(f"[DEBUG] Current price: {current_price}, Signal buy: {signal_buy}, Signal sell: {signal_sell}")
+    print(f"[DEBUG] Position: {position}, Balance: {balance}")
 
     if position == 0 and signal_buy:
         position = 1
@@ -192,7 +216,6 @@ while True:
             send_telegram("[Daily] Giữ nguyên balance, tiếp tục giao dịch ngày mới!")
 
         print(f"✅ Đã xử lý lúc: {now_utc.strftime('%Y-%m-%d %H:%M:%S')} UTC")
-        print(f"📊 Balance hiện tại: {balance:.2f} USDT")
         time.sleep(900)  # 15 phút
 
     except Exception as e:
