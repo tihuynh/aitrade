@@ -22,14 +22,14 @@ TESTNET_MODE = False  # True: Testnet, False: Real Market
 ALLOW_WEAK_DATA = TESTNET_MODE
 print(f"🚀 Đang chạy ở chế độ: {'TESTNET' if TESTNET_MODE else 'REAL MARKET'}")
 if TESTNET_MODE:
-    API_KEY = "BIpG5vVt41fsIEUcQe"
-    API_SECRET = "pVfG0mafX1ey8clN6quZqTI4EZvkrQgeoziX"
+    API_KEY = "API_KEY"
+    API_SECRET = "API_SECRET"
     testnet = True
     model_file = "models/testnet/ai_model.keras"  # Model riêng cho Testnet
     data_file = "data/testnet/data.json"  # Dữ liệu riêng cho Testnet
 else:
-    API_KEY = "Hm5gG0HKbm5MDo5bpo"
-    API_SECRET = "D6iP8YwCisA8pUylvh6916rnvWxoyKQnq1jp"
+    API_KEY = "API_KEY"
+    API_SECRET = "API_SECRET"
     testnet = False
     model_file = "models/real/ai15m_model.keras"  # Model riêng cho tài khoản thật
     data_file = "data/real/data15m.json"  # Dữ liệu riêng cho tài khoản thật
