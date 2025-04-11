@@ -24,12 +24,12 @@ from pytz import timezone
 # ============================
 # Cấu hình API và Telegram
 # ============================
-API_KEY = "Hm5gG0HKbm5MDo5bpo"
-API_SECRET = "D6iP8YwCisA8pUylvh6916rnvWxoyKQnq1jp"
+API_KEY = "API_KEY"
+API_SECRET = "API_SECRET"
 BASE_URL = "https://api.bybit.com"
 
-TELEGRAM_TOKEN = '7621293655:AAHaLf_tMtt-vxpb1Qt0K6QEOGmfhmhy0lY'
-TELEGRAM_CHAT_ID = '1989267515'
+TELEGRAM_TOKEN = 'TELEGRAM_TOKEN'
+TELEGRAM_CHAT_ID = 'TELEGRAM_CHAT_ID'
 
 # ============================
 # Thư mục lưu trữ log và model
