@@ -26,8 +26,8 @@ from google.colab import drive, files
 # ============================
 # 🔧 Cấu hình Telegram & Drive
 # ============================
-telegram_token = '7621293655:AAHaLf_tMtt-vxpb1Qt0K6QEOGmfhmhy0lY'
-telegram_chat_id = '1989267515'
+telegram_token = 'telegram_token'
+telegram_chat_id = 'telegram_chat_id'
 drive.mount('/content/drive')
 
 # ============================
