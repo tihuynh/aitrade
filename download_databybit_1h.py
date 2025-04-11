@@ -3,8 +3,8 @@
 # from pybit.unified_trading import HTTP
 #
 # # ===== CẤU HÌNH =====
-# API_KEY = "Hm5gG0HKbm5MDo5bpo"
-# API_SECRET = "D6iP8YwCisA8pUylvh6916rnvWxoyKQnq1jp"
+# API_KEY = "API_KEY"
+# API_SECRET = "API_SECRET"
 # SYMBOL = "BTCUSDT"
 # TIMEFRAME = "60"  # 1h
 # LIMIT = 2000
