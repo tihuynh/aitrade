@@ -12,8 +12,8 @@ from sklearn.preprocessing import MinMaxScaler
 TESTNET_MODE = True  # True: Testnet, False: Real Market
 
 if TESTNET_MODE:
-    API_KEY = "BIpG5vVt41fsIEUcQe"
-    API_SECRET = "pVfG0mafX1ey8clN6quZqTI4EZvkrQgeoziX"
+    API_KEY = "API_KEY"
+    API_SECRET = "API_SECRET"
     testnet = True
     model_file = "ai_model_testnet.h5"  # Model riêng cho Testnet
     data_file = "data_testnet.json"  # Dữ liệu riêng cho Testnet
