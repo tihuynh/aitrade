@@ -1,7 +1,7 @@
 # ============================
 # 📦 Cài thư viện cần thiết
 # ============================
-!pip install ta tensorflow matplotlib scikit-learn requests
+!pip install ta tensorflow matplotlib scikit-learn requests python-dotenv
 
 import os
 import shutil
@@ -22,13 +22,26 @@ from ta.momentum import RSIIndicator
 from ta.volatility import BollingerBands, AverageTrueRange
 import requests
 from google.colab import drive, files
+from dotenv import load_dotenv
 
 # ============================
-# 🔧 Cấu hình Telegram & Drive
+# 🔧 Load biến môi trường từ .env
 # ============================
-telegram_token = '7621293655:AAHaLf_tMtt-vxpb1Qt0K6QEOGmfhmhy0lY'
-telegram_chat_id = '1989267515'
+uploaded_env = files.upload()
+for filename in uploaded_env:
+    if filename.endswith('.env'):
+        os.rename(filename, ".env")
+
+load_dotenv(".env")
+telegram_token = os.getenv("TELEGRAM_TOKEN")
+telegram_chat_id = os.getenv("TELEGRAM_CHAT_ID")
+
+
+# ============================
+# 🗂 Mount Google Drive
+# ============================
 drive.mount('/content/drive')
+
 
 # ============================
 # 🚀 Cố định seed random để ổn định
