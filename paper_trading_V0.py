@@ -20,8 +20,8 @@ from pytz import timezone
 # ============================
 # Cấu hình Telegram
 # ============================
-TELEGRAM_TOKEN = '7621293655:AAHaLf_tMtt-vxpb1Qt0K6QEOGmfhmhy0lY'
-TELEGRAM_CHAT_ID = '1989267515'
+TELEGRAM_TOKEN = 'TELEGRAM_TOKEN'
+TELEGRAM_CHAT_ID = 'TELEGRAM_CHAT_ID'
 
 # ============================
 # Thư mục lưu trữ log và model
