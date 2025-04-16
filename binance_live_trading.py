@@ -21,14 +21,12 @@ from ta.momentum import RSIIndicator
 from ta.volatility import BollingerBands, AverageTrueRange
 from pytz import timezone
 from dotenv import load_dotenv
-
+from decimal import Decimal, ROUND_DOWN
 
 # ============================
 # Cấu hình API và Telegram
 # ============================
 load_dotenv()
-print(f"[DEBUG] API KEY: {os.getenv('API_KEY_BINANCE')}")
-print(f"[DEBUG] TELEGRAM TOKEN: {os.getenv('TELEGRAM_TOKEN')}")
 API_KEY = os.getenv("API_KEY_BINANCE")
 API_SECRET = os.getenv("API_SECRET_BINANCE")
 TELEGRAM_TOKEN = os.getenv("TELEGRAM_TOKEN")
@@ -90,10 +88,8 @@ def get_current_price():
         print(f"⚠️ Lỗi lấy giá Binance: {e}")
         return None
 
-
 def get_balance_usdt():
     try:
-        print("vao ham get_balance_usdt")
         timestamp = int(time.time() * 1000)
         params = {"timestamp": timestamp}
         query_string = urlencode(params)
@@ -109,16 +105,13 @@ def get_balance_usdt():
             if asset["asset"] == "USDT":
                 return float(asset["free"])
     except Exception as e:
-        error_msg = f"⚠️ Lỗi lấy balance BTC Binance: {e}"
+        error_msg = f"⚠️ Lỗi lấy balance USDT Binance: {e}"
         print(error_msg)
         send_telegram(error_msg)
     return 0.0
 
-
-
 def get_balance_btc():
     try:
-        print("vao ham get_balance_btc")
         timestamp = int(time.time() * 1000)
         params = {"timestamp": timestamp}
         query_string = urlencode(params)
@@ -139,50 +132,52 @@ def get_balance_btc():
         send_telegram(error_msg)
     return 0.0
 
+def round_step_size(value, step_size):
+    precision = int(round(-np.log10(step_size)))
+    return float(Decimal(value).quantize(Decimal(str(step_size)), rounding=ROUND_DOWN))
 
+def get_lot_step_size(symbol="BTCUSDT"):
+    url = "https://api.binance.com/api/v3/exchangeInfo"
+    response = requests.get(url, timeout=10)
+    data = response.json()
+
+    for s in data["symbols"]:
+        if s["symbol"] == symbol:
+            for f in s["filters"]:
+                if f["filterType"] == "LOT_SIZE":
+                    return float(f["stepSize"])
+    return 0.000001  # fallback
 
 def place_order(side, quantity):
     try:
-        print (f"DEBUG - quantity= {quantity}")
         url = "https://api.binance.com/api/v3/order"
         timestamp = int(time.time() * 1000)
-
-        # Khởi tạo params
         params = {
             "symbol": "BTCUSDT",
             "side": "BUY" if side.lower() == "buy" else "SELL",
             "type": "MARKET",
             "timestamp": timestamp
         }
+        print(f"DEBUG - Place_order - quantity:{quantity}")
         if side.lower() == "buy":
-            params["quoteOrderQty"] = quantity  # số tiền USDT muốn dùng
+            params["quoteOrderQty"] = quantity
         else:
-            params["quantity"] = quantity       # số BTC muốn bán
+            params["quantity"] = quantity
 
-        # Tạo query string
         query_string = urlencode(params)
-
-        # Ký signature
         signature = hmac.new(API_SECRET.encode('utf-8'), query_string.encode('utf-8'), hashlib.sha256).hexdigest()
         params['signature'] = signature
-
-        # Headers
-        headers = {
-            'X-MBX-APIKEY': API_KEY
-        }
-
-        # Gửi request
+        headers = {'X-MBX-APIKEY': API_KEY}
         response = requests.post(url, params=params, headers=headers, timeout=10)
         data = response.json()
+        print(f"DEBUG - Place_order - data: {data}")
 
-        print(f"[DEBUG] API response: {data}")
 
         if 'code' in data and data['code'] != 0:
-            send_telegram(f"❌ Lỗi đặt lệnh {side}: {data}")
+            send_telegram(f"❌ Lỗi đặt lệnh {side.upper()}: {data}")
+            return None  # Ngăn không cho tiếp tục xử lý như thành công
         return data
-
     except Exception as e:
-        print(f"❌ Exception khi đặt lệnh {side}: {e}")
         send_telegram(f"❌ Exception khi đặt lệnh {side}: {e}")
         return None
 
@@ -199,7 +194,6 @@ def get_latest_candle():
     for col in ["open", "high", "low", "close", "volume"]:
         df[col] = df[col].astype(float)
     return df
-
 
 def add_indicators(df):
     df["sma"] = SMAIndicator(df["close"], window=14).sma_indicator()
@@ -226,49 +220,40 @@ buy_price = 0
 take_profit = 0
 stop_loss = 0
 
+# Load trạng thái từ file nếu có
+state_path = "logs/position_state.json"
+if os.path.exists(state_path):
+    with open(state_path, "r") as f:
+        state = json.load(f)
+    position = state.get("position", 0)
+    buy_price = state.get("buy_price", 0)
+    take_profit = state.get("take_profit", 0)
+    stop_loss = state.get("stop_loss", 0)
+    send_telegram(f"✅ Khôi phục trạng thái: BUY: {buy_price:.2f} TP: {take_profit:.2f} SL: {stop_loss:.2f}")
+else:
+    send_telegram("⚙️ Bot khởi động: không có trạng thái cũ, bắt đầu từ 0")
+
 # Khởi tạo file log nếu chưa có
 if not os.path.exists(log_file):
     with open(log_file, "w") as f:
         f.write("timestamp,action,price,balance\n")
 
 def live_trading():
-    global balance, position, buy_price, take_profit, stop_loss
-
+    global position, buy_price, take_profit, stop_loss
     df = get_latest_candle()
     df = add_indicators(df)
+    feature_cols = ["close", "sma", "ema", "macd", "macd_signal", "macd_diff", "rsi", "bb_bbm", "bb_bbh", "bb_bbl", "atr", "adx"]
 
-    feature_cols = ["close", "sma", "ema", "macd", "macd_signal", "macd_diff", "rsi", "bb_bbm", "bb_bbh", "bb_bbl",
-                    "atr", "adx"]
-    # scaler.fit(df[feature_cols])
-    # Load scaler đã fit từ lúc train model
-    print(f"[DEBUG] Feature DataFrame shape: {df[feature_cols].shape}")
-    print(f"[DEBUG] Feature Columns: {df[feature_cols].columns.tolist()}")
-    print(f"[DEBUG] Last sequence data: {df[feature_cols].iloc[-5:]}")
-
-    scaler = joblib.load("models_backup/scaler.pkl")
-    print(f"🔍 Scaler loaded: data min {scaler.data_min_} / data max {scaler.data_max_}")
     last_sequence = scaler.transform(df[feature_cols].iloc[-100:])
     last_sequence = last_sequence.reshape(1, 100, len(feature_cols))
-
-    # Dự đoán
     predicted_scaled = model.predict(last_sequence, verbose=0)[0][0]
 
-    # Để inverse transform đúng, bạn cần copy hàng cuối cùng từ last_sequence flatten ra
-    dummy = last_sequence.copy().reshape(100, len(feature_cols))[-1]  # Lấy step cuối
-
-    # Thay giá trị cột close bằng giá trị dự đoán
-    dummy[0] = predicted_scaled  # Cột close là index 0
-
-    # Inverse transform
+    dummy = last_sequence.reshape(100, len(feature_cols))[-1]
+    dummy[0] = predicted_scaled
     predicted_close = scaler.inverse_transform([dummy])[0][0]
-    print(f"[DEBUG] Giá dự đoán sau inverse transform: {predicted_close}")
 
-    # current_price = df["close"].iloc[-1]
     current_price = get_current_price()
-    print(f"[DEBUG] Real-time current price: {current_price}")
     atr = df["atr"].iloc[-1]
-
-    # Logic như backtest
     macd_bullish = df["macd"].iloc[-1] - df["macd_signal"].iloc[-1] > -15
     rsi_ok = df["rsi"].iloc[-1] > 40
     price_near_bottom = current_price <= df["close"].iloc[-20:].rolling(20).min().iloc[-1] * 1.05
@@ -277,35 +262,42 @@ def live_trading():
 
     signal_buy = ai_confidence and macd_bullish and rsi_ok and price_near_bottom and adx_ok
     signal_sell = position == 1 and (current_price >= take_profit or current_price <= stop_loss)
-
     print(f"[DEBUG] Signal buy: {signal_buy}, Signal sell: {signal_sell}")
     print(f"[DEBUG] Position: {position}")
-
     if position == 0 and signal_buy:
+        print("===========BUY BTC==========")
         usdt_balance = get_balance_usdt()
         print(f"[DEBUG] usdt_balance: {usdt_balance}")
         if usdt_balance > 5:
-            print("===========BUY BTC==========")
             qty = round(usdt_balance, 6)
             place_order("Buy", qty)
             position = 1
             buy_price = current_price
             take_profit = buy_price * 1.004
             stop_loss = buy_price * 0.996
+            with open(state_path, "w") as f:
+                json.dump({"position": position, "buy_price": buy_price, "take_profit": take_profit, "stop_loss": stop_loss}, f)
             save_log("BUY", buy_price, usdt_balance)
             send_telegram(f"[Live Trading] BUY {buy_price:.2f} | TP: {take_profit:.2f} | SL: {stop_loss:.2f}")
 
     elif signal_sell:
         btc_balance = get_balance_btc()
-        print(f"[DEBUG] btc_balance: {btc_balance}")
         if btc_balance > 0.00001:
             print("===========SELL BTC==========")
-            qty = round(btc_balance, 6)
-            place_order("Sell", qty)
-            result = "TP" if current_price >= take_profit else "SL"
-            save_log(result, current_price, btc_balance * current_price)
-            send_telegram(f"[Live Trading] {result} {current_price:.2f} | Balance: {btc_balance * current_price:.2f}")
-            position = 0
+            step_size = get_lot_step_size()
+            qty = round_step_size(btc_balance, step_size)
+            result = place_order("Sell", qty)
+            if result is None:
+                print("❌ SELL thất bại, giữ nguyên trạng thái position = 1")
+                send_telegram("❌ SELL thất bại, giữ nguyên BTC")
+            else:
+                result_text = "TP" if current_price >= take_profit else "SL"
+                save_log(result_text, current_price, btc_balance * current_price)
+                send_telegram(
+                    f"[Live Trading] {result_text} {current_price:.2f} | Balance: {btc_balance * current_price:.2f}")
+                position = 0
+                if os.path.exists(state_path):
+                    os.remove(state_path)
 
 # ============================
 # Main Loop
@@ -317,15 +309,11 @@ while True:
     try:
         now_utc = datetime.datetime.now(timezone('UTC'))
         live_trading()
-
         if now_utc.hour == 0 and now_utc.minute == 0:
             send_log_file()
             send_telegram("[Daily Report] Live trading vẫn đang hoạt động!")
-
         print(f"✅ Đã xử lý lúc: {now_utc.strftime('%Y-%m-%d %H:%M:%S')} UTC")
-        time.sleep(900)  # 15 phút
-
+        time.sleep(900)
     except Exception as e:
-        print(f"❌ Lỗi: {e}")
         send_telegram(f"❌ Lỗi Live Trading: {e}")
         time.sleep(60)
