@@ -60,5 +60,5 @@ df[["open", "high", "low", "close", "volume"]] = df[["open", "high", "low", "clo
 df.sort_values("timestamp", inplace=True)
 
 # Lưu file
-df.to_csv("binance_btc_15m.csv", index=False)
+df.to_csv("data/backtest/binance_btc_15m.csv", index=False)
 print("✅ Đã lưu file binance_btc_15m.csv thành công!")
