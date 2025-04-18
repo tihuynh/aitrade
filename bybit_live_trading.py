@@ -20,16 +20,17 @@ from ta.trend import SMAIndicator, EMAIndicator, MACD, ADXIndicator
 from ta.momentum import RSIIndicator
 from ta.volatility import BollingerBands, AverageTrueRange
 from pytz import timezone
+from dotenv import load_dotenv
 
 # ============================
 # Cấu hình API và Telegram
 # ============================
-API_KEY = "API_KEY"
-API_SECRET = "API_SECRET"
+load_dotenv()
+API_KEY = os.getenv("API_KEY_BYBIT")
+API_SECRET = os.getenv("API_SECRET_BYBIT")
+TELEGRAM_TOKEN = os.getenv("TELEGRAM_TOKEN_BYBIT_SPOT")
+TELEGRAM_CHAT_ID = os.getenv("TELEGRAM_CHAT_ID_BYBIT_SPOT")
 BASE_URL = "https://api.bybit.com"
-
-TELEGRAM_TOKEN = 'TELEGRAM_TOKEN'
-TELEGRAM_CHAT_ID = 'TELEGRAM_CHAT_ID'
 
 # ============================
 # Thư mục lưu trữ log và model
@@ -80,20 +81,34 @@ def save_log(action, price, balance):
 # Bybit Spot Trading Functions
 # ============================
 def bybit_request(method, endpoint, params=None, private=False):
-    if params is None:
-        params = {}
+    try:
+        if params is None:
+            params = {}
 
-    headers = {"Content-Type": "application/json"}
-    if private:
-        params["api_key"] = API_KEY
-        params["timestamp"] = int(time.time() * 1000)
-        query_string = urlencode(sorted(params.items()))
-        signature = hmac.new(bytes(API_SECRET, "utf-8"), bytes(query_string, "utf-8"), hashlib.sha256).hexdigest()
-        params["sign"] = signature
+        headers = {"Content-Type": "application/json"}
+        if private:
+            params["api_key"] = API_KEY
+            params["timestamp"] = int(time.time() * 1000)
+            query_string = urlencode(sorted(params.items()))
+            signature = hmac.new(bytes(API_SECRET, "utf-8"), bytes(query_string, "utf-8"), hashlib.sha256).hexdigest()
+            params["sign"] = signature
 
-    url = f"{BASE_URL}{endpoint}?{urlencode(params)}"
-    response = requests.request(method, url, headers=headers)
-    return response.json()
+        url = f"{BASE_URL}{endpoint}?{urlencode(params)}"
+        response = requests.request(method, url, headers=headers)
+        # ✅ Kiểm tra mã lỗi HTTP trước khi parse JSON
+        response.raise_for_status()
+        try:
+            return response.json()
+        except json.JSONDecodeError:
+            error_msg = f"❌ JSONDecodeError: Không thể parse JSON. Response: {response.text}"
+            print(error_msg)
+            send_telegram(error_msg)
+            return {}
+    except Exception as e:
+        error_msg = f"⚠️ Lỗi trong bybit_request: {e}"
+        print(error_msg)
+        send_telegram(error_msg)
+        return {}
 
 def get_current_price():
     try:
@@ -107,8 +122,8 @@ def get_current_price():
         return None
 
 def get_balance_usdt():
-    data = bybit_request("GET", "/v5/account/wallet-balance", {"accountType": "UNIFIED"}, private=True)
     try:
+        data = bybit_request("GET", "/v5/account/wallet-balance", {"accountType": "UNIFIED"}, private=True)
         for asset in data.get("result", {}).get("list", [])[0].get("coin", []):
             if asset["coin"] == "USDT":
                 # Lấy walletBalance chứ không phải availableToWithdraw
@@ -119,8 +134,8 @@ def get_balance_usdt():
 
 
 def get_balance_btc():
-    data = bybit_request("GET", "/v5/account/wallet-balance", {"accountType": "UNIFIED"}, private=True)
     try:
+        data = bybit_request("GET", "/v5/account/wallet-balance", {"accountType": "UNIFIED"}, private=True)
         for asset in data.get("result", {}).get("list", [])[0].get("coin", []):
             if asset["coin"] == "BTC":
                 return float(asset["walletBalance"])
