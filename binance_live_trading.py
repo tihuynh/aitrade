@@ -267,7 +267,7 @@ def live_trading():
         df = add_indicators(df)
         feature_cols = ["close", "sma", "ema", "macd", "macd_signal", "macd_diff", "rsi", "bb_bbm", "bb_bbh", "bb_bbl", "atr", "adx"]
 
-        last_sequence = scaler.transform(df[feature_cols].iloc[-100:])
+        last_sequence = scaler.transform(df[feature_cols].iloc[-101:-1])  # nến từ -101 đến -2
         last_sequence = last_sequence.reshape(1, 100, len(feature_cols))
         predicted_scaled = model.predict(last_sequence, verbose=0)[0][0]
 
@@ -276,13 +276,29 @@ def live_trading():
         predicted_close = scaler.inverse_transform([dummy])[0][0]
 
         current_price = get_current_price()
-        atr = df["atr"].iloc[-1]
-        macd_bullish = df["macd"].iloc[-1] - df["macd_signal"].iloc[-1] > -15
-        rsi_ok = df["rsi"].iloc[-1] > 40
-        price_near_bottom = current_price <= df["close"].iloc[-20:].rolling(20).min().iloc[-1] * 1.05
-        adx_ok = df["adx"].iloc[-1] > 20
-        ai_confidence = predicted_close > current_price * 1.001
 
+        # macd_bullish = df["macd"].iloc[-2] - df["macd_signal"].iloc[-2] > -15
+        # Mới (nới lỏng):
+        macd_bullish = df["macd"].iloc[-2] > df["macd_signal"].iloc[-2] * 0.98
+        rsi_ok = df["rsi"].iloc[-2] > 40
+        recent_rolling_min = df["close"].iloc[-21:-1].min()
+        # price_near_bottom = current_price <= recent_rolling_min * 1.05
+        # Mới (nới rộng):
+        price_near_bottom = current_price <= recent_rolling_min * 1.08
+        # adx_ok = df["adx"].iloc[-2] > 20
+        # Mới (nới lỏng):
+        adx_ok = df["adx"].iloc[-2] > 15
+        ai_confidence = predicted_close > current_price * 1.001
+        print(f"DEBUG - predicted_close = {predicted_close}")
+        print(f"DEBUG - current_price = {current_price}")
+        print(f"DEBUG - ai_confidence ={ai_confidence}")
+        print(f"DEBUG - macd_bullish ={macd_bullish}")
+        print(f"DEBUG - rsi_ok ={rsi_ok}")
+        print(f"DEBUG - price_near_bottom ={price_near_bottom}")
+        print(f"DEBUG - adx_ok ={adx_ok}")
+        print(f"DEBUG - current_price ={current_price}")
+        print(f"DEBUG - take_profit ={take_profit}")
+        print(f"DEBUG - stop_loss ={stop_loss}")
         signal_buy = ai_confidence and macd_bullish and rsi_ok and price_near_bottom and adx_ok
         signal_sell = position == 1 and (current_price >= take_profit or current_price <= stop_loss)
         print(f"[DEBUG] Signal buy: {signal_buy}, Signal sell: {signal_sell}")
@@ -297,8 +313,9 @@ def live_trading():
                 place_order("Buy", adjusted_qty)
                 position = 1
                 buy_price = current_price
-                take_profit = buy_price * 1.004
-                stop_loss = buy_price * 0.996
+                entry_atr = df["atr"].iloc[-2]
+                take_profit = buy_price + entry_atr * 2
+                stop_loss = buy_price - entry_atr * 1.5
                 with open(state_path, "w") as f:
                     json.dump({"position": position, "buy_price": buy_price, "take_profit": take_profit, "stop_loss": stop_loss}, f)
                 save_log("BUY", buy_price, usdt_balance)
@@ -334,7 +351,7 @@ def live_trading():
 # Main Loop
 # ============================
 print("✅ Live Trading BTCUSDT - Khung 15 phút đã bắt đầu!")
-send_telegram("✅ Live Trading BTCUSDT - Khung 15 phút đã bắt đầu!")
+send_telegram("✅ Live Trading BTCUSDT Code mới- Khung 15 phút đã bắt đầu!")
 # ✅ Gọi hàm khởi tạo trạng thái
 initialize_trading_state()
 while True:
