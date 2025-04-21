@@ -314,7 +314,8 @@ def live_trading():
                 position = 1
                 buy_price = current_price
                 entry_atr = df["atr"].iloc[-2]
-                take_profit = buy_price + entry_atr * 2
+                # take_profit = buy_price + entry_atr * 2
+                take_profit = min(predicted_close, buy_price + entry_atr * 4)
                 stop_loss = buy_price - entry_atr * 1.5
                 with open(state_path, "w") as f:
                     json.dump({"position": position, "buy_price": buy_price, "take_profit": take_profit, "stop_loss": stop_loss}, f)
