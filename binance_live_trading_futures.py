@@ -38,7 +38,7 @@ def send_tele(text):
 # 🧠 Load model và scaler
 # ============================
 model = load_model("models/ai_futures_model.keras")
-scaler = joblib.load("models/backup/scaler.pkl")
+scaler = joblib.load("models/backup/scaler_futures.pkl")
 lookback = 100
 symbol = "BTCUSDT"
 leverage = 2
@@ -96,44 +96,58 @@ def make_decision(df):
     X = scaler.transform(latest[feature_cols])
     X = np.expand_dims(X, axis=0)
     predicted_price = model.predict(X, verbose=0)[0][0]
-    current_price = df["close"].iloc[-1]
-    atr = df["atr"].iloc[-1]
-    macd_bullish = df["macd"].iloc[-1] - df["macd_signal"].iloc[-1] > -15
-    rsi_ok = df["rsi"].iloc[-1] > 40
-    near_bottom = current_price <= df["close"].iloc[-20:].min() * 1.05
-    adx_ok = df["adx"].iloc[-1] > 20
+    current_price = df["close"].iloc[-2]
+    atr = df["atr"].iloc[-2]
+    macd_bullish = df["macd"].iloc[-2] - df["macd_signal"].iloc[-2] > -15
+    rsi_ok = df["rsi"].iloc[-2] > 40
+    near_bottom = current_price <= df["close"].iloc[-20:-2].min() * 1.05
+    adx_ok = df["adx"].iloc[-2] > 20
+
+    def get_balance():
+        url = f"https://fapi.binance.com/fapi/v2/balance"
+        timestamp = int(time.time() * 1000)
+        query = f"timestamp={timestamp}"
+        signature = create_signature(query)
+        headers = {"X-MBX-APIKEY": API_KEY}
+        r = requests.get(f"{url}?{query}&signature={signature}", headers=headers)
+        data = r.json()
+        return float([x for x in data if x['asset'] == 'USDT'][0]['availableBalance'])
 
     if position == 0:
         if predicted_price > current_price * 1.001 and macd_bullish and rsi_ok and near_bottom and adx_ok:
+            balance_before = get_balance()
             qty = get_quantity()
             order = place_order("BUY", qty)
             if order:
                 position = 1
                 entry_price = current_price
-                send_tele(f"🔰 Mở LONG tại {current_price:.2f}")
+                send_tele(f"🔰 Mở LONG tại {current_price:.2f}\n💵 Balance trước lệnh: {balance_before:.2f} USDT")
         elif predicted_price < current_price * 0.999 and not macd_bullish and not rsi_ok and adx_ok:
+            balance_before = get_balance()
             qty = get_quantity()
             order = place_order("SELL", qty)
             if order:
                 position = -1
                 entry_price = current_price
-                send_tele(f"🔻 Mở SHORT tại {current_price:.2f}")
+                send_tele(f"🔻 Mở SHORT tại {current_price:.2f}\n💵 Balance trước lệnh: {balance_before:.2f} USDT")
 
     elif position == 1:
         if current_price >= entry_price * 1.004 or current_price <= entry_price * 0.996:
             qty = get_quantity()
             order = place_order("SELL", qty)
             if order:
-                send_tele(f"✅ Đóng LONG tại {current_price:.2f}")
                 position = 0
+                balance_after = get_balance()
+                send_tele(f"✅ Đóng LONG tại {current_price:.2f}\n💰 Balance sau đóng lệnh: {balance_after:.2f} USDT")
 
     elif position == -1:
         if current_price <= entry_price * 0.996 or current_price >= entry_price * 1.004:
             qty = get_quantity()
             order = place_order("BUY", qty)
             if order:
-                send_tele(f"✅ Đóng SHORT tại {current_price:.2f}")
                 position = 0
+                balance_after = get_balance()
+                send_tele(f"✅ Đóng SHORT tại {current_price:.2f}\n💰 Balance sau đóng lệnh: {balance_after:.2f} USDT")
 
 # ============================
 # 📦 Tính khối lượng lệnh từ số dư USDT

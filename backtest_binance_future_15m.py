@@ -25,7 +25,7 @@ from google.colab import drive, files
 from dotenv import load_dotenv
 
 # ============================
-# 🔧 Load biến môi trường từ .env
+# 🔧 Load biến môi trường
 # ============================
 print("📥 Vui lòng upload file .env trước!")
 uploaded_env = files.upload()
@@ -34,8 +34,8 @@ for filename in uploaded_env:
         os.rename(filename, ".env")
 
 load_dotenv(".env")
-telegram_token = os.getenv("TELEGRAM_TOKEN")
-telegram_chat_id = os.getenv("TELEGRAM_CHAT_ID")
+telegram_token = os.getenv("TELEGRAM_TOKEN_FUTURES")
+telegram_chat_id = os.getenv("TELEGRAM_CHAT_ID_FUTURES")
 
 # ============================
 # 🗂 Mount Google Drive
@@ -65,7 +65,10 @@ data_file = list(uploaded.keys())[0]
 # ============================
 def load_and_prepare_data(file_path):
     df = pd.read_csv(file_path)
-    df["timestamp"] = pd.to_datetime(df["timestamp"], unit="ms", utc=True)
+    try:
+        df["timestamp"] = pd.to_datetime(df["timestamp"], unit="ms", utc=True)
+    except Exception:
+        df["timestamp"] = pd.to_datetime(df["timestamp"], utc=True)
     df.sort_values("timestamp", inplace=True)
 
     df["sma"] = SMAIndicator(df["close"], window=14).sma_indicator()
@@ -87,11 +90,11 @@ def load_and_prepare_data(file_path):
 # ============================
 # 🤖 Huấn luyện mô hình
 # ============================
-def train_model(df, lookback=100):
+def train_model(df, lookback=100, model_index=0):
     feature_cols = ["close", "sma", "ema", "macd", "macd_signal", "macd_diff", "rsi", "bb_bbm", "bb_bbh", "bb_bbl", "atr", "adx"]
     scaler = MinMaxScaler()
     scaled_data = scaler.fit_transform(df[feature_cols])
-    joblib.dump(scaler, 'models/backup/scaler.pkl')
+    joblib.dump(scaler, f'models/backup/scaler_{model_index}.pkl')
     X, y = [], []
     for i in range(lookback, len(scaled_data)):
         X.append(scaled_data[i-lookback:i])
@@ -107,13 +110,12 @@ def train_model(df, lookback=100):
         Dense(1)
     ])
     model.compile(optimizer='adam', loss='mean_squared_error')
-    model.fit(X, y, epochs=10, batch_size=64, verbose=0, callbacks=[EarlyStopping(patience=2)])
+    model.fit(X, y, epochs=10, batch_size=64, verbose=0, callbacks=[EarlyStopping(monitor='loss', patience=2)])
 
-    model.save("models/ai_futures_model.keras")
     return model, scaler
 
 # ============================
-# 📈 Backtest Futures Logic (Long/Short)
+# 📈 Backtest chiến lược Futures
 # ============================
 def backtest_strategy(model, scaler, df, initial_balance=5000, lookback=100, leverage=2):
     feature_cols = ["close", "sma", "ema", "macd", "macd_signal", "macd_diff", "rsi", "bb_bbm", "bb_bbh", "bb_bbl", "atr", "adx"]
@@ -128,78 +130,60 @@ def backtest_strategy(model, scaler, df, initial_balance=5000, lookback=100, lev
     atr = df["atr"].iloc[lookback:].values
     timestamps = df["timestamp"].iloc[lookback:].values
 
+    macd_bullish = (df["macd"].iloc[lookback:].values - df["macd_signal"].iloc[lookback:].values) > -15
+    rsi_ok = df["rsi"].iloc[lookback:].values > 40
+    price_near_bottom = close_prices <= df["close"].iloc[lookback - 20:-20].rolling(20).min().values * 1.05
+    adx_ok = df["adx"].iloc[lookback:].values > 20
+
+    ai_confidence_long = predictions > close_prices * 1.001
+    ai_confidence_short = predictions < close_prices * 0.999
+
+    buy_condition = ai_confidence_long & macd_bullish & rsi_ok & price_near_bottom & adx_ok
+    sell_condition = ai_confidence_short & (~macd_bullish) & (~rsi_ok) & adx_ok
+
     balance = initial_balance
     position = 0
     entry_price, take_profit, stop_loss = 0, 0, 0
-    direction = ""  # "LONG" or "SHORT"
-    trade_log = []
-    equity_curve = []
+    direction = ""
     wins, losses = 0, 0
 
     for i in range(len(close_prices)):
         price = close_prices[i]
-        predicted = predictions[i]
-        timestamp = timestamps[i]
-
         if position == 0:
-            if predicted > price * 1.001:
+            if buy_condition[i]:
                 position = 1
                 direction = "LONG"
                 entry_price = price
-                take_profit = price * 1.004
-                stop_loss = price * 0.996
-                trade_log.append(f"LONG tại {price:.2f} | TP: {take_profit:.2f} | SL: {stop_loss:.2f}")
-            elif predicted < price * 0.999:
+            elif sell_condition[i]:
                 position = 1
                 direction = "SHORT"
                 entry_price = price
-                take_profit = price * 0.996
-                stop_loss = price * 1.004
-                trade_log.append(f"SHORT tại {price:.2f} | TP: {take_profit:.2f} | SL: {stop_loss:.2f}")
 
         elif position == 1:
             if direction == "LONG":
-                if price >= take_profit:
+                if price >= entry_price * 1.004:
                     profit = leverage * atr[i] * 2 / entry_price
                     balance *= 1 + profit
-                    trade_log.append(f"TP LONG tại {price:.2f} | Balance: {balance:.2f}")
                     wins += 1
                     position = 0
-                elif price <= stop_loss:
+                elif price <= entry_price * 0.996:
                     loss = leverage * atr[i] * 1.5 / entry_price
                     balance *= 1 - loss
-                    trade_log.append(f"SL LONG tại {price:.2f} | Balance: {balance:.2f}")
                     losses += 1
                     position = 0
             elif direction == "SHORT":
-                if price <= take_profit:
+                if price <= entry_price * 0.996:
                     profit = leverage * atr[i] * 2 / entry_price
                     balance *= 1 + profit
-                    trade_log.append(f"TP SHORT tại {price:.2f} | Balance: {balance:.2f}")
                     wins += 1
                     position = 0
-                elif price >= stop_loss:
+                elif price >= entry_price * 1.004:
                     loss = leverage * atr[i] * 1.5 / entry_price
                     balance *= 1 - loss
-                    trade_log.append(f"SL SHORT tại {price:.2f} | Balance: {balance:.2f}")
                     losses += 1
                     position = 0
 
-        if position == 0:
-            equity_curve.append(balance)
-
     winrate = (wins / (wins + losses)) * 100 if (wins + losses) > 0 else 0
-
-    # Lưu biểu đồ và log
-    plt.figure(figsize=(12, 6))
-    plt.plot(timestamps[:len(equity_curve)], equity_curve)
-    plt.title("Futures Equity Curve")
-    plt.xlabel("Time")
-    plt.ylabel("Balance (USDT)")
-    plt.tight_layout()
-    plt.savefig("backtest_results/equity_curve.png")
-    pd.DataFrame(trade_log).to_csv("backtest_results/trade_log.csv", index=False, encoding="utf-8-sig")
-
     return balance, winrate
 
 # ============================
@@ -210,8 +194,11 @@ best_balance = 0
 
 for i in range(30):
     print(f"\n🔁 Lần train-backtest {i+1}/30")
-    model, scaler = train_model(df)
+    model, scaler = train_model(df, model_index=i)
     balance, winrate = backtest_strategy(model, scaler, df)
+
+    model_path = f"models/backup/model_b{int(balance)}_w{int(winrate)}.keras"
+    model.save(model_path)
 
     if balance > best_balance:
         best_balance = balance
@@ -219,20 +206,17 @@ for i in range(30):
 
 print(f"\n📊 Tốt nhất sau 30 lần: {best_balance:.2f} USDT")
 
-# Gửi qua Telegram
-os.system('zip -r models_backup.zip models/backup backtest_results')
-shutil.copy('models_backup.zip', '/content/drive/MyDrive/models_futures_backup.zip')
+# ============================
+# 📦 Nén và gửi file zip
+# ============================
+os.system('zip -r models_futures_all.zip models/backup backtest_results')
+shutil.copy('models_futures_all.zip', '/content/drive/MyDrive/models_futures_all.zip')
 
-with open('models_backup.zip', 'rb') as f:
-    response = requests.post(
+with open('models_futures_all.zip', 'rb') as f:
+    requests.post(
         f'https://api.telegram.org/bot{telegram_token}/sendDocument?chat_id={telegram_chat_id}',
         files={'document': f}
     )
-
-if response.status_code == 200:
-    print("✅ Đã gửi model backup về Telegram")
-else:
-    print("❌ Lỗi gửi file về Telegram:", response.text)
 
 report = f"[Backtest Futures]\nBalance tốt nhất: {best_balance:.2f} USDT"
 requests.post(
