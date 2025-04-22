@@ -94,7 +94,7 @@ def train_model(df, lookback=100, model_index=0):
     feature_cols = ["close", "sma", "ema", "macd", "macd_signal", "macd_diff", "rsi", "bb_bbm", "bb_bbh", "bb_bbl", "atr", "adx"]
     scaler = MinMaxScaler()
     scaled_data = scaler.fit_transform(df[feature_cols])
-    joblib.dump(scaler, f'models/backup/scaler_{model_index}.pkl')
+
     X, y = [], []
     for i in range(lookback, len(scaled_data)):
         X.append(scaled_data[i-lookback:i])
@@ -196,7 +196,7 @@ for i in range(30):
     print(f"\n🔁 Lần train-backtest {i+1}/30")
     model, scaler = train_model(df, model_index=i)
     balance, winrate = backtest_strategy(model, scaler, df)
-
+    joblib.dump(scaler, f'models/backup/scaler_b{int(balance)}_w{int(winrate)}.pkl')
     model_path = f"models/backup/model_b{int(balance)}_w{int(winrate)}.keras"
     model.save(model_path)
 
