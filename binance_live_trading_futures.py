@@ -48,22 +48,23 @@ DEBUG_MODE = True
 LOG_FILE = "logs/debug_log.txt"
 POSITION_STATE_FILE = "logs/binance_futures_position_state.json"
 os.makedirs("logs", exist_ok=True)
-def save_position_state():
+def save_position_state(qty):
     state = {
         "position": position,
-        "entry_price": entry_price
+        "entry_price": entry_price,
+        "qty": qty   # lưu chính xác số BTC đã mua
     }
     with open(POSITION_STATE_FILE, "w") as f:
         json.dump(state, f)
 
+
 def load_position_state():
-    global position, entry_price
     if os.path.exists(POSITION_STATE_FILE):
         with open(POSITION_STATE_FILE, "r") as f:
             state = json.load(f)
-            position = state.get("position", 0)
-            entry_price = state.get("entry_price", 0)
-load_position_state()  # ✅ Load trạng thái nếu có
+            return state.get("position", 0), state.get("entry_price", 0), state.get("qty", 0)
+    return 0, 0, 0
+
 # ============================
 # 🧮 Hàm tạo chữ ký HMAC
 # ============================
@@ -120,11 +121,30 @@ def prepare_features(df):
             f.write(error_msg + "\n")
 
 # ============================
+# 📌 Bổ sung sự kiện set đòn bẩy và gởi trước khi mở lệnh
+# ============================
+def set_leverage(symbol="BTCUSDT", leverage=2):
+    url = "https://fapi.binance.com/fapi/v1/leverage"
+    timestamp = int(time.time() * 1000)
+    params = {
+        "symbol": symbol,
+        "leverage": leverage,
+        "timestamp": timestamp
+    }
+    query_string = "&".join([f"{k}={v}" for k, v in params.items()])
+    signature = create_signature(query_string)
+    headers = {"X-MBX-APIKEY": API_KEY}
+    response = requests.post(f"{url}?{query_string}&signature={signature}", headers=headers)
+    if response.status_code != 200:
+        send_tele(f"⚠️ Lỗi set leverage: {response.text}")
+    return response.json()
+
+# ============================
 # 🧠 Dự đoán AI và logic vào lệnh
 # ============================
 def make_decision(df):
     try:
-        global position, entry_price
+        position, entry_price, qty = load_position_state()
         feature_cols = ["close", "sma", "ema", "macd", "macd_signal", "macd_diff", "rsi", "bb_bbm", "bb_bbh", "bb_bbl", "atr", "adx"]
         latest = df[-lookback:]
         X = scaler.transform(latest[feature_cols])
@@ -167,31 +187,33 @@ def make_decision(df):
             if predicted_price_real > current_price * 1.001 and macd_bullish and rsi_ok and near_bottom and adx_ok:
                 print("Thỏa điều kiện Long, lệnh place order sẽ được thực hiện")
                 send_tele("Thỏa điều kiện Long, lệnh place order sẽ được thực hiện")
+                set_leverage(symbol, leverage)  # ✅ Gọi API set đòn bẩy trước khi mở lệnh
                 balance_before = get_balance()
                 qty = get_quantity()
                 order = place_order("BUY", qty, reduce_only=False) # mở LONG
                 if order:
                     position = 1
                     entry_price = current_price
-                    save_position_state()
+                    save_position_state(qty)
                     send_tele(f"🔰 Mở LONG tại {current_price:.2f}\n💵 Balance trước lệnh: {balance_before:.2f} USDT")
             elif predicted_price_real < current_price * 0.999 and not macd_bullish and not rsi_ok and adx_ok:
                 print("Thỏa điều kiện SHORT, lệnh place order sẽ được thực hiện")
                 send_tele("Thỏa điều kiện SHORT, lệnh place order sẽ được thực hiện")
+                set_leverage(symbol, leverage)  # ✅ Gọi API set đòn bẩy trước khi mở lệnh
                 balance_before = get_balance()
                 qty = get_quantity()
                 order = place_order("SELL", qty, reduce_only=False)  # mở SHORT
                 if order:
                     position = -1
                     entry_price = current_price
-                    save_position_state()
+                    save_position_state(qty)
                     send_tele(f"🔻 Mở SHORT tại {current_price:.2f}\n💵 Balance trước lệnh: {balance_before:.2f} USDT")
 
         elif position == 1:
             if current_price >= entry_price * 1.004 or current_price <= entry_price * 0.996:
                 print("Thỏa điều kiện đóng lệnh Long, lệnh place order sẽ được thực hiện")
                 send_tele("Thỏa điều kiện đóng lệnh Long, lệnh place order sẽ được thực hiện")
-                qty = get_quantity()
+                # qty = get_quantity()
                 order = place_order("SELL", qty, reduce_only=True)  # đóng LONG
                 if order:
                     position = 0
@@ -204,7 +226,7 @@ def make_decision(df):
             if current_price <= entry_price * 0.996 or current_price >= entry_price * 1.004:
                 print("Thỏa điều kiện đóng lệnh SHORT, lệnh place order sẽ được thực hiện")
                 send_tele("Thỏa điều kiện đóng lệnh SHORT, lệnh place order sẽ được thực hiện")
-                qty = get_quantity()
+                # qty = get_quantity()
                 order = place_order("BUY", qty, reduce_only=True)   # đóng SHORT
                 if order:
                     position = 0
