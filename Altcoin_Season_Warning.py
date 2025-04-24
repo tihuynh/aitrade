@@ -54,13 +54,17 @@ def get_index_data():
         }
 
     except Exception as e:
-        print(f"Lỗi khi lấy dữ liệu chỉ số: {e}")
+        error_msg = f"❌ Lỗi trong make_decision: {e}"
+        send_telegram(error_msg)
+        print(error_msg)
         return None
 
 
 # Hàm đọc dữ liệu hôm qua từ file log (nếu có)
 def load_yesterday_data():
     try:
+        if not os.path.exists("logs/altseason_log.csv"):
+            return None  # Không có file -> return luôn
         with open("logs/altseason_log.csv", "r") as f:
             lines = f.readlines()
             if len(lines) < 2:
@@ -75,64 +79,131 @@ def load_yesterday_data():
                 "TOTAL2": float(last_line[5]),
                 "TOTAL3": float(last_line[6])
             }
-    except:
+    except Exception as e:
+        error_msg = f"❌ Lỗi trong make_decision: {e}"
+        send_telegram(error_msg)
+        print(error_msg)
         return None
 
 # Hàm lưu dữ liệu hôm nay vào file log
-def save_today_data(today_data):
-    with open("logs/altseason_log.csv", "a") as f:
-        line = f"{datetime.date.today()},{today_data['DXY']},{today_data['BTC.D']},{today_data['ETH.D']},{today_data['OTHERS.D']},{today_data['TOTAL2']},{today_data['TOTAL3']}\n"
-        f.write(line)
+def save_today_data(today_data, score):
+    try:
+        os.makedirs("logs", exist_ok=True)
+        with open("logs/altseason_log.csv", "a") as f:
+            line = f"{datetime.date.today()},{today_data['DXY']},{today_data['BTC.D']},{today_data['ETH.D']},{today_data['OTHERS.D']},{today_data['TOTAL2']},{today_data['TOTAL3']},{score}\n"
+            f.write(line)
+    except Exception as e:
+        error_msg = f"❌ Lỗi ghi log hôm nay: {e}"
+        send_telegram(error_msg)
+        print(error_msg)
 
 # Hàm phân tích xu hướng
 
 def analyze_trend(today, yesterday):
-    def emoji(change):
-        return "✅" if change < 0 else "⚠️"
+    try:
+        def emoji_and_note(key, change):
+            is_positive = {
+                "DXY": change < 0,
+                "BTC.D": change < 0,
+                "ETH.D": change > 0,
+                "OTHERS.D": change > 0,
+                "TOTAL2": change > 0,
+                "TOTAL3": change > 0
+            }
+            note = "✅ (tốt cho Altcoin)" if is_positive[key] else "⚠️ (xấu cho Altcoin)"
+            emoji = "✅" if is_positive[key] else "⚠️"
+            return emoji, note
 
-    changes = {
-        "DXY": today["DXY"] - yesterday["DXY"],
-        "BTC.D": today["BTC.D"] - yesterday["BTC.D"],
-        "ETH.D": today["ETH.D"] - yesterday["ETH.D"],
-        "OTHERS.D": today["OTHERS.D"] - yesterday["OTHERS.D"],
-        "TOTAL2": today["TOTAL2"] - yesterday["TOTAL2"],
-        "TOTAL3": today["TOTAL3"] - yesterday["TOTAL3"]
-    }
+        changes = {
+            "DXY": today["DXY"] - yesterday["DXY"],
+            "BTC.D": today["BTC.D"] - yesterday["BTC.D"],
+            "ETH.D": today["ETH.D"] - yesterday["ETH.D"],
+            "OTHERS.D": today["OTHERS.D"] - yesterday["OTHERS.D"],
+            "TOTAL2": (today["TOTAL2"] - yesterday["TOTAL2"]) / yesterday["TOTAL2"] * 100,
+            "TOTAL3": (today["TOTAL3"] - yesterday["TOTAL3"]) / yesterday["TOTAL3"] * 100,
+        }
 
-    message = "*📊 Dự báo xu hướng Crypto hôm nay:*\n\n"
-    message += f"{emoji(changes['DXY'])} DXY: {today['DXY']} ({changes['DXY']:+.2f})\n"
-    message += f"{emoji(-changes['BTC.D'])} BTC Dominance: {today['BTC.D']} ({changes['BTC.D']:+.2f})\n"
-    message += f"{emoji(-changes['ETH.D'])} ETH Dominance: {today['ETH.D']} ({changes['ETH.D']:+.2f})\n"
-    message += f"{emoji(-changes['OTHERS.D'])} Others Dominance: {today['OTHERS.D']} ({changes['OTHERS.D']:+.2f})\n"
-    message += f"{emoji(-changes['TOTAL2'])} TOTAL2: {today['TOTAL2']}B ({changes['TOTAL2']:+.2f})\n"
-    message += f"{emoji(-changes['TOTAL3'])} TOTAL3: {today['TOTAL3']}B ({changes['TOTAL3']:+.2f})\n\n"
+        message = "*📊 Dự báo xu hướng Crypto hôm nay:*\n\n"
+        for key in ["DXY", "BTC.D", "ETH.D", "OTHERS.D", "TOTAL2", "TOTAL3"]:
+            emoji, note = emoji_and_note(key, changes[key])
+            unit = "%" if key.endswith("D") else "%"
+            value = f"{today[key]:.2f}"
+            delta = f"{changes[key]:+.2f}{unit}"
+            label = key.replace(".", " Dominance").replace("TOTAL2", "TOTAL2").replace("TOTAL3", "TOTAL3")
+            message += f"{emoji} {label}: {value}{unit} ({delta}) {note}\n"
 
-    score = 0
-    if changes['DXY'] < 0: score += 1
-    if changes['BTC.D'] < 0: score += 1
-    if changes['ETH.D'] > 0: score += 1
-    if changes['OTHERS.D'] > 0: score += 1
-    if changes['TOTAL2'] > 0: score += 1
-    if changes['TOTAL3'] > 0: score += 1
+        message += "\n"
 
-    if score >= 4:
-        message += "🎯 *Tín hiệu tích cực cho Altcoin.* Có thể giải ngân 20–30% USDT vào Altcoin mạnh."
-    else:
-        message += "🔎 *Thị trường đang phân vân.* Quan sát thêm trước khi giải ngân lớn."
+        # Chấm điểm xu hướng Altcoin Season
+        score = 0
+        if changes['DXY'] < 0: score += 1
+        if changes['BTC.D'] < 0: score += 1
+        if changes['ETH.D'] > 0: score += 1
+        if changes['OTHERS.D'] > 0: score += 1
+        if changes['TOTAL2'] > 0: score += 1
+        if changes['TOTAL3'] > 0: score += 1
 
-    return message
+        if score >= 5:
+            message += "🔥 *Altcoin Season mạnh!* Có thể giải ngân mạnh vào Altcoin tiềm năng.\n"
+        elif score >= 3:
+            message += "✨ *Tín hiệu tích cực nhẹ cho Altcoin.* Cân nhắc giải ngân 10–30%.\n"
+        else:
+            message += "💤 *Thị trường chưa rõ ràng.* Nên quan sát thêm, chưa vội giải ngân.\n"
+
+        message += f"\n*Score Altcoin Season hôm nay: {score}/6*"
+
+        return message
+
+    except Exception as e:
+        error_msg = f"❌ Lỗi trong make_decision: {e}"
+        send_telegram(error_msg)
+        print(error_msg)
+def emoji_and_note(key, change):
+    is_good = (
+        (key == "DXY" and change < 0) or
+        (key == "BTC.D" and change < 0) or
+        (key == "ETH.D" and change > 0) or
+        (key == "OTHERS.D" and change > 0) or
+        (key == "TOTAL2" and change > 0) or
+        (key == "TOTAL3" and change > 0)
+    )
+    emoji = "✅" if is_good else "⚠️"
+    note = "✅ (tốt cho Altcoin)" if is_good else "⚠️ (xấu cho Altcoin)"
+    return emoji, note
+
+def calculate_score(today, yesterday):
+    try:
+        score = 0
+        if today["DXY"] < yesterday["DXY"]: score += 1
+        if today["BTC.D"] < yesterday["BTC.D"]: score += 1
+        if today["ETH.D"] > yesterday["ETH.D"]: score += 1
+        if today["OTHERS.D"] > yesterday["OTHERS.D"]: score += 1
+        if today["TOTAL2"] > yesterday["TOTAL2"]: score += 1
+        if today["TOTAL3"] > yesterday["TOTAL3"]: score += 1
+        return score
+    except Exception as e:
+        error_msg = f"❌ Lỗi trong make_decision: {e}"
+        send_telegram(error_msg)
+        print(error_msg)
 
 # =============================
 # Chạy bot mỗi sáng
 # =============================
 if __name__ == '__main__':
-    today_data = get_index_data()
-    yesterday_data = load_yesterday_data()
+    try:
+        today_data = get_index_data()
+        yesterday_data = load_yesterday_data()
 
-    if yesterday_data:
-        report = analyze_trend(today_data, yesterday_data)
-        send_telegram(report)
-    else:
-        send_telegram("📌 Bot khởi tạo dữ liệu thị trường. Báo cáo đầy đủ sẽ bắt đầu từ ngày mai.")
+        if yesterday_data:
+            report = analyze_trend(today_data, yesterday_data)
+            send_telegram(report)
+        else:
+            send_telegram("📌 Bot khởi tạo dữ liệu thị trường. Báo cáo đầy đủ sẽ bắt đầu từ ngày mai.")
 
-    save_today_data(today_data)
+        score = calculate_score(today_data, yesterday_data) if yesterday_data else 0
+        save_today_data(today_data, score)
+
+    except Exception as e:
+        error_msg = f"❌ Lỗi trong make_decision: {e}"
+        send_telegram(error_msg)
+        print(error_msg)
