@@ -44,7 +44,7 @@ symbol = "BTCUSDT"
 leverage = 2
 position = 0
 entry_price = 0
-DEBUG_MODE = True
+DEBUG_MODE = False
 LOG_FILE = "logs/debug_log.txt"
 POSITION_STATE_FILE = "logs/binance_futures_position_state.json"
 os.makedirs("logs", exist_ok=True)
@@ -159,7 +159,7 @@ def make_decision(df):
     try:
         global position, entry_price, qty
         position, entry_price, qty, _ = load_position_state()
-        send_tele(f"🧠 Loaded state: position={position}, entry_price={entry_price}, qty={qty}")
+        # send_tele(f"🧠 Loaded state: position={position}, entry_price={entry_price}, qty={qty}")
         feature_cols = ["close", "sma", "ema", "macd", "macd_signal", "macd_diff", "rsi", "bb_bbm", "bb_bbh", "bb_bbl", "atr", "adx"]
         latest = df[-lookback:]
         X = scaler.transform(latest[feature_cols])
@@ -192,8 +192,8 @@ def make_decision(df):
                 f.write(msg + "\n")
         if position == 0:
             if predicted_price_real > current_price * 1.001 and macd_bullish and rsi_ok and near_bottom and adx_ok:
-                print("Thỏa điều kiện Long, lệnh place order sẽ được thực hiện")
-                send_tele("Thỏa điều kiện Long, lệnh place order sẽ được thực hiện")
+                # print("Thỏa điều kiện Long, lệnh place order sẽ được thực hiện")
+                # send_tele("Thỏa điều kiện Long, lệnh place order sẽ được thực hiện")
                 set_leverage(symbol, leverage)  # ✅ Gọi API set đòn bẩy trước khi mở lệnh
                 balance_before = get_balance()
                 qty = get_quantity(current_price)
@@ -214,8 +214,8 @@ def make_decision(df):
                     log_trade(position, qty, current_price, notional)
 
             elif predicted_price_real < current_price * 0.999 and not macd_bullish and not rsi_ok and adx_ok:
-                print("Thỏa điều kiện SHORT, lệnh place order sẽ được thực hiện")
-                send_tele("Thỏa điều kiện SHORT, lệnh place order sẽ được thực hiện")
+                # print("Thỏa điều kiện SHORT, lệnh place order sẽ được thực hiện")
+                # send_tele("Thỏa điều kiện SHORT, lệnh place order sẽ được thực hiện")
                 set_leverage(symbol, leverage)  # ✅ Gọi API set đòn bẩy trước khi mở lệnh
                 balance_before = get_balance()
                 qty = get_quantity(current_price)
@@ -237,8 +237,8 @@ def make_decision(df):
 
         elif position == 1:
             if current_price >= entry_price * 1.004 or current_price <= entry_price * 0.996:
-                print("Thỏa điều kiện đóng lệnh Long, lệnh place order sẽ được thực hiện")
-                send_tele("Thỏa điều kiện đóng lệnh Long, lệnh place order sẽ được thực hiện")
+                # print("Thỏa điều kiện đóng lệnh Long, lệnh place order sẽ được thực hiện")
+                # send_tele("Thỏa điều kiện đóng lệnh Long, lệnh place order sẽ được thực hiện")
                 notional = qty * current_price
                 debug_msg = f"📌 ĐÓNG LỆNH LONG\nQty BTC: {qty}, Giá hiện tại: {current_price}, Notional: {notional:.2f}"
                 send_tele(debug_msg)
@@ -259,8 +259,8 @@ def make_decision(df):
 
         elif position == -1:
             if current_price <= entry_price * 0.996 or current_price >= entry_price * 1.004:
-                print("Thỏa điều kiện đóng lệnh SHORT, lệnh place order sẽ được thực hiện")
-                send_tele("Thỏa điều kiện đóng lệnh SHORT, lệnh place order sẽ được thực hiện")
+                # print("Thỏa điều kiện đóng lệnh SHORT, lệnh place order sẽ được thực hiện")
+                # send_tele("Thỏa điều kiện đóng lệnh SHORT, lệnh place order sẽ được thực hiện")
                 notional = qty * current_price
                 debug_msg = f"📌 ĐÓNG LỆNH SHORT\nQty BTC: {qty}, Giá hiện tại: {current_price}, Notional: {notional:.2f}"
                 send_tele(debug_msg)
