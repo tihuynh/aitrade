@@ -155,27 +155,43 @@ def set_leverage(symbol="BTCUSDT", leverage=2):
 # ============================
 # 🧠 Dự đoán AI và logic vào lệnh
 # ============================
+# ============================
+# 🧠 make_decision(df) - Phiên bản nâng cấp dùng ATR
+# ============================
+# ============================
+# 🧠 make_decision(df) - Phiên bản nâng cấp Chống Quét SL
+# ============================
 def make_decision(df):
     try:
         global position, entry_price, qty
         position, entry_price, qty, _ = load_position_state()
-        # send_tele(f"🧠 Loaded state: position={position}, entry_price={entry_price}, qty={qty}")
-        feature_cols = ["close", "sma", "ema", "macd", "macd_signal", "macd_diff", "rsi", "bb_bbm", "bb_bbh", "bb_bbl", "atr", "adx"]
+
+        feature_cols = [
+            "close", "sma", "ema", "macd", "macd_signal", "macd_diff",
+            "rsi", "bb_bbm", "bb_bbh", "bb_bbl", "atr", "adx"
+        ]
         latest = df[-lookback:]
         X = scaler.transform(latest[feature_cols])
         X = np.expand_dims(X, axis=0)
         predicted_price = model.predict(X, verbose=0)[0][0]
+
         dummy = np.zeros((1, len(feature_cols)))
         dummy[0, 0] = predicted_price
         predicted_price_real = scaler.inverse_transform(dummy)[0, 0]
 
-        current_price = df["close"].iloc[-2]
+        current_price = df["close"].iloc[-1]
         atr = df["atr"].iloc[-2]
+        ema20 = df["ema"].iloc[-2]
+        ema50 = df["sma"].iloc[-2]
         macd_bullish = df["macd"].iloc[-2] - df["macd_signal"].iloc[-2] > -15
         rsi_ok = df["rsi"].iloc[-2] > 40
         near_bottom = current_price <= df["close"].iloc[-20:-2].min() * 1.05
         adx_ok = df["adx"].iloc[-2] > 20
 
+        # ✅ Bỏ qua nếu ATR cao >0.8%
+        if atr / current_price > 0.008:
+            send_tele(f"⚠️ ATR cao ({atr:.2f}), bỏ qua không vào lệnh.")
+            return
 
         if DEBUG_MODE:
             msg = (
@@ -183,72 +199,81 @@ def make_decision(df):
                 f"[DEBUG AI]\n"
                 f"Giá: {current_price:.2f}\n"
                 f"Dự đoán: {predicted_price_real:.2f}\n"
+                f"EMA20: {ema20:.2f}, EMA50: {ema50:.2f}\n"
                 f"MACD: {macd_bullish}, RSI: {rsi_ok}, ADX: {adx_ok}, NearBottom: {near_bottom}\n"
+                f"ATR: {atr:.2f}\n"
                 f"Position: {position}"
             )
             send_tele(msg)
-            print(msg)
-            with open(LOG_FILE, "a") as f:
-                f.write(msg + "\n")
+
         if position == 0:
-            if predicted_price_real > current_price * 1.001 and macd_bullish and rsi_ok and near_bottom and adx_ok:
-                # print("Thỏa điều kiện Long, lệnh place order sẽ được thực hiện")
-                # send_tele("Thỏa điều kiện Long, lệnh place order sẽ được thực hiện")
-                set_leverage(symbol, leverage)  # ✅ Gọi API set đòn bẩy trước khi mở lệnh
+            if predicted_price_real > current_price * 1.0005 and rsi_ok and adx_ok and ema20 > ema50:
+                set_leverage(symbol, leverage)
                 balance_before = get_balance()
                 qty = get_quantity(current_price)
                 notional = qty * current_price
-                debug_msg = f"📌 MỞ LỆNH\nUSDT: {balance_before:.2f}, Qty BTC: {qty}, Giá: {current_price}, Notional: {notional:.2f}"
-                send_tele(debug_msg)
-                print(debug_msg)
+
                 if notional < 100:
                     send_tele(f"⚠️ Lệnh bị huỷ vì notional < 100: {notional:.2f}")
                     return
 
-                order = place_order("BUY", qty, reduce_only=False) # mở LONG
-                if order:
-                    position = 1
-                    entry_price = current_price
-                    save_position_state(position, entry_price, qty, predicted_price_real)
-                    send_tele(f"🔰 Mở LONG tại {current_price:.2f}\n💵 Balance trước lệnh: {balance_before:.2f} USDT")
-                    log_trade(position, qty, current_price, notional)
+                order = place_order("BUY", qty, reduce_only=False)
+                if order is None:
+                    send_tele("❌ Lỗi khi mở lệnh BUY: Order trả về None.")
+                    return
+                position = 1
+                entry_price = current_price
+                save_position_state(position, entry_price, qty, predicted_price_real)
 
-            elif predicted_price_real < current_price * 0.999 and not macd_bullish and not rsi_ok and adx_ok:
-                # print("Thỏa điều kiện SHORT, lệnh place order sẽ được thực hiện")
-                # send_tele("Thỏa điều kiện SHORT, lệnh place order sẽ được thực hiện")
-                set_leverage(symbol, leverage)  # ✅ Gọi API set đòn bẩy trước khi mở lệnh
+                tp_price = entry_price + atr * 2.5
+                sl_price = entry_price - atr * 2.0
+
+                send_tele(
+                    f"🔰 Mở LONG tại {entry_price:.2f}\n"
+                    f"📈 TP : {tp_price:.2f}\n"
+                    f"🛡️ SL : {sl_price:.2f}\n"
+                    f"📏 ATR hiện tại: {atr:.2f}\n"
+                    f"💵 Balance trước lệnh: {balance_before:.2f} USDT"
+                )
+                log_trade(position, qty, current_price, notional)
+
+            elif predicted_price_real < current_price * 0.9995 and adx_ok and ema20 < ema50:
+                set_leverage(symbol, leverage)
                 balance_before = get_balance()
                 qty = get_quantity(current_price)
                 notional = qty * current_price
-                debug_msg = f"📌 MỞ LỆNH\nUSDT: {balance_before:.2f}, Qty BTC: {qty}, Giá: {current_price}, Notional: {notional:.2f}"
-                send_tele(debug_msg)
-                print(debug_msg)
+
                 if notional < 100:
                     send_tele(f"⚠️ Lệnh bị huỷ vì notional < 100: {notional:.2f}")
                     return
 
-                order = place_order("SELL", qty, reduce_only=False)  # mở SHORT
-                if order:
-                    position = -1
-                    entry_price = current_price
-                    save_position_state(position, entry_price, qty, predicted_price_real)
-                    send_tele(f"🔻 Mở SHORT tại {current_price:.2f}\n💵 Balance trước lệnh: {balance_before:.2f} USDT")
-                    log_trade(position, qty, current_price, notional)
+                order = place_order("SELL", qty, reduce_only=False)
+                if order is None:
+                    send_tele("❌ Lỗi khi mở lệnh SELL: Order trả về None.")
+                    return
+                position = -1
+                entry_price = current_price
+                save_position_state(position, entry_price, qty, predicted_price_real)
+
+                tp_price = entry_price - atr * 2.5
+                sl_price = entry_price + atr * 2.0
+
+                send_tele(
+                    f"🔻 Mở SHORT tại {entry_price:.2f}\n"
+                    f"📈 TP : {tp_price:.2f}\n"
+                    f"🛡️ SL : {sl_price:.2f}\n"
+                    f"📏 ATR hiện tại: {atr:.2f}\n"
+                    f"💵 Balance trước lệnh: {balance_before:.2f} USDT"
+                )
+                log_trade(position, qty, current_price, notional)
 
         elif position == 1:
-            if current_price >= entry_price * 1.004 or current_price <= entry_price * 0.996:
-                # print("Thỏa điều kiện đóng lệnh Long, lệnh place order sẽ được thực hiện")
-                # send_tele("Thỏa điều kiện đóng lệnh Long, lệnh place order sẽ được thực hiện")
+            if current_price >= entry_price + atr * 2.5 or current_price <= entry_price - atr * 2.0:
                 notional = qty * current_price
-                debug_msg = f"📌 ĐÓNG LỆNH LONG\nQty BTC: {qty}, Giá hiện tại: {current_price}, Notional: {notional:.2f}"
-                send_tele(debug_msg)
-                print(debug_msg)
-                # qty = get_quantity()
                 if notional < 100:
                     send_tele(f"⚠️ Lệnh bị huỷ vì notional < 100: {notional:.2f}")
                     return
-
-                order = place_order("SELL", qty, reduce_only=True)  # đóng LONG
+                order = place_order("SELL", qty, reduce_only=True)
                 if order:
                     position = 0
                     balance_after = get_balance()
@@ -258,19 +283,12 @@ def make_decision(df):
                     log_trade(position, qty, current_price, notional)
 
         elif position == -1:
-            if current_price <= entry_price * 0.996 or current_price >= entry_price * 1.004:
-                # print("Thỏa điều kiện đóng lệnh SHORT, lệnh place order sẽ được thực hiện")
-                # send_tele("Thỏa điều kiện đóng lệnh SHORT, lệnh place order sẽ được thực hiện")
+            if current_price <= entry_price - atr * 2.5 or current_price >= entry_price + atr * 2.0:
                 notional = qty * current_price
-                debug_msg = f"📌 ĐÓNG LỆNH SHORT\nQty BTC: {qty}, Giá hiện tại: {current_price}, Notional: {notional:.2f}"
-                send_tele(debug_msg)
-                print(debug_msg)
-                # qty = get_quantity()
                 if notional < 100:
                     send_tele(f"⚠️ Lệnh bị huỷ vì notional < 100: {notional:.2f}")
                     return
-
-                order = place_order("BUY", qty, reduce_only=True)   # đóng SHORT
+                order = place_order("BUY", qty, reduce_only=True)
                 if order:
                     position = 0
                     balance_after = get_balance()
@@ -285,6 +303,7 @@ def make_decision(df):
         print(error_msg)
         with open(LOG_FILE, "a") as f:
             f.write(error_msg + "\n")
+
 def log_trade(position, qty, price, notional):
     timestamp = datetime.utcnow().strftime("%Y-%m-%d %H:%M:%S")
     side = "BUY" if position == 1 else "SELL"
@@ -324,7 +343,7 @@ def get_quantity(current_price):
         qty = round_step_size(raw_qty)
 
         notional = qty * current_price
-        send_tele(f"📊 USDT: {usdt_balance:.2f}, Qty BTC: {qty:.6f}, Giá: {current_price:.2f}, Notional: {notional:.2f}")
+        # send_tele(f"📊 USDT: {usdt_balance:.2f}, Qty BTC: {qty:.6f}, Giá: {current_price:.2f}, Notional: {notional:.2f}")
         return qty
     except Exception as e:
         error_msg = f"❌ Lỗi trong get_quantity: {e}"
