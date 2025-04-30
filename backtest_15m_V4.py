@@ -68,6 +68,8 @@ data_file = list(uploaded.keys())[0]
 # ============================
 def load_and_prepare_data(file_path):
     df = pd.read_csv(file_path)
+    df.columns = df.columns.str.strip()
+    df.reset_index(inplace=True)  # 👉 Giải phóng timestamp ra khỏi index nếu có
     if df["timestamp"].dtype in ["int64", "float64"]:
         df["timestamp"] = pd.to_datetime(df["timestamp"], unit='ms', utc=True)
     else:
@@ -99,15 +101,18 @@ def train_model(df, lookback=100):
     feature_cols = ["close", "sma", "ema", "macd", "macd_signal", "macd_diff", "rsi", "bb_bbm", "bb_bbh", "bb_bbl", "atr", "adx"]
     scaler = MinMaxScaler()
     scaled_data = scaler.fit_transform(df[feature_cols])
-    # ✅ Lưu scaler
-    joblib.dump(scaler, 'models/backup/scaler.pkl')
-    print("✅ Scaler đã lưu tại models_backup/scaler.pkl")
+
     X, y = [], []
     for i in range(lookback, len(scaled_data)):
         X.append(scaled_data[i - lookback:i])
         y.append(scaled_data[i][0])
     X, y = np.array(X), np.array(y)
 
+    # Tạo tên theo timestamp
+    timestamp = datetime.datetime.now().strftime("%Y%m%d_%H%M%S")
+    model_name = f"ai15m_model_{timestamp}"
+    model_path = f"models/{model_name}.keras"
+    scaler_path = f"models/{model_name}.pkl"
     model = Sequential([
         Input(shape=(lookback, len(feature_cols))),
         LSTM(64, return_sequences=True),
@@ -118,11 +123,16 @@ def train_model(df, lookback=100):
     ])
     model.compile(optimizer='adam', loss='mean_squared_error')
     early_stop = EarlyStopping(monitor='loss', patience=2, restore_best_weights=True)
-
     model.fit(X, y, epochs=10, batch_size=64, verbose=0, callbacks=[early_stop])
 
-    model.save("models/ai15m_model_colab.keras")
-    return model, scaler
+    # Lưu model và scaler
+    model.save(model_path)
+    joblib.dump(scaler, scaler_path)
+
+    print(f"✅ Đã lưu model tại: {model_path}")
+    print(f"✅ Đã lưu scaler tại: {scaler_path}")
+
+    return model, scaler, model_name
 
 # ============================
 # 📈 Backtest chiến lược
@@ -145,7 +155,11 @@ def backtest_strategy(model, scaler, df, initial_balance=5000, lookback=100):
     adx_ok = df["adx"].iloc[lookback:].values > 20
     ai_confidence = predictions > current_price * 1.001
 
-    buy_condition = ai_confidence & macd_bullish & rsi_ok & price_near_bottom & adx_ok
+    volume = df["volume"].iloc[lookback:].values
+    volume_ma10 = df["volume"].rolling(10).mean().iloc[lookback:].values
+    volume_breakout = volume > volume_ma10
+
+    buy_condition = ai_confidence & macd_bullish & rsi_ok & price_near_bottom & adx_ok & volume_breakout
 
     balance = initial_balance
     position = 0
@@ -158,23 +172,52 @@ def backtest_strategy(model, scaler, df, initial_balance=5000, lookback=100):
     for i in range(len(current_price)):
         price = current_price[i]
         timestamp = timestamps[i]
-
+        predicted_close = predictions[i]
         if position == 0 and buy_condition[i]:
             position = 1
             buy_price = price
-            take_profit = round(buy_price * 1.004, 2)
-            stop_loss = round(buy_price * 0.996, 2)
-            trade_log.append(f"Mua tại {buy_price:.2f} | TP: {take_profit} | SL: {stop_loss}")
+            mode = "fixed"
+            if mode == "fixed":
+                take_profit = round(buy_price * 1.004, 2)
+                stop_loss = round(buy_price * 0.996, 2)
+            elif mode == "adaptive":
+                take_profit = min(predicted_close, buy_price + atr[i] * 4)
+                stop_loss = buy_price - atr[i] * 1.5
+            trade_log.append(f"Mua tại {buy_price:.2f} | TP: {take_profit:.2f} | SL: {stop_loss:.2f}")
 
         elif position == 1:
             if price >= take_profit:
-                balance *= 1 + (atr[i] * 2 / buy_price)
-                trade_log.append(f"TP tại {price:.2f} | Số dư: {balance:.2f}")
+                gain_pct = (take_profit - buy_price) / buy_price
+                gain_usdt = balance * gain_pct
+                old_balance = balance
+                balance += gain_usdt
+                trade_log.append({
+                    "timestamp": timestamp,
+                    "action": "TP",
+                    "buy_price": round(buy_price, 2),
+                    "sell_price": round(price, 2),
+                    "gain_pct": round(gain_pct * 100, 2),
+                    "gain_usdt": round(gain_usdt, 2),
+                    "balance_before": round(old_balance, 2),
+                    "balance_after": round(balance, 2)
+                })
                 win_count += 1
                 position = 0
             elif price <= stop_loss:
-                balance *= 1 - (atr[i] * 1.5 / buy_price)
-                trade_log.append(f"SL tại {price:.2f} | Số dư: {balance:.2f}")
+                loss_pct = (buy_price - stop_loss) / buy_price
+                loss_usdt = balance * loss_pct
+                old_balance = balance
+                balance -= loss_usdt
+                trade_log.append({
+                    "timestamp": timestamp,
+                    "action": "SL",
+                    "buy_price": round(buy_price, 2),
+                    "sell_price": round(price, 2),
+                    "gain_pct": round(-loss_pct * 100, 2),
+                    "gain_usdt": round(-loss_usdt, 2),
+                    "balance_before": round(old_balance, 2),
+                    "balance_after": round(balance, 2)
+                })
                 loss_count += 1
                 position = 0
 
@@ -198,7 +241,8 @@ def backtest_strategy(model, scaler, df, initial_balance=5000, lookback=100):
         timestamp = datetime.datetime.now().strftime("%Y%m%d_%H%M%S")
         backup_dir = f"models/backup/balance{int(balance)}_{timestamp}"
         os.makedirs(backup_dir, exist_ok=True)
-        shutil.copy("models/ai15m_model_colab.keras", os.path.join(backup_dir, "model.keras"))
+        shutil.copy(f"models/{model_name}.keras", os.path.join(backup_dir, "model.keras"))
+        shutil.copy(f"models/{model_name}.pkl", os.path.join(backup_dir, "scaler.pkl"))
 
     return balance, winrate
 
@@ -211,7 +255,7 @@ best_balance = 0
 
 for i in range(30):
     print(f"\nVòng train-backtest {i + 1}/30")
-    model, scaler = train_model(df, lookback=100)
+    model, scaler, model_name = train_model(df, lookback=100)
     balance, winrate = backtest_strategy(model, scaler, df, initial_balance=5000)
 
     if balance > best_balance:
