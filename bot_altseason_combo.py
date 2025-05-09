@@ -1,193 +1,389 @@
 # ======================================
-# 🤖 BOT ALTSEASON FULL COMBO (Giai đoạn 2 + 3 + 4)
+# 🤖 BOT ALTSEASON FULL COMBO (Giai đoạn 2 + 3 + 4 + 5)
 # ======================================
 
-import requests
-import time
 import os
 import json
+import time
+import requests
 from dotenv import load_dotenv
 from web3 import Web3
 from eth_account import Account
 from datetime import datetime
-# === Load biến môi trường ===
+
+# === Load .env ===
 load_dotenv()
 PRIVATE_KEY = os.getenv("PRIVATE_KEY")
-RPC_URL = os.getenv("RPC_URL")
-WALLET_ADDRESS = Web3.to_checksum_address(Account.from_key(PRIVATE_KEY).address)
 TELEGRAM_TOKEN = os.getenv("TELEGRAM_TOKEN_ALTCOIN_SEASON")
 CHAT_ID = os.getenv("TELEGRAM_CHAT_ID_ALTCOIN_SEASON")
 
-# === Kết nối Web3 ===
-w3 = Web3(Web3.HTTPProvider(RPC_URL))
-assert w3.is_connected(), "❌ Không thể kết nối RPC"
+# === Các wrapped token cho 4 chain ===
+WRAPPED_TOKENS = {
+    "bsc": "0xBB4CdB9CBd36B01bD1cBaEBF2De08d9173bc095c",  # WBNB
+    "eth": "0xC02aaa39b223FE8D0A0e5C4F27eAD9083C756Cc2",  # WETH
+    "arbitrum": "0x82af49447d8a07e3bd95bd0d56f35241523fbab1",  # WETH
+    "base": "0x4200000000000000000000000000000000000006"   # WETH
+}
 
-# === Router PancakeSwap V2 ===
-ROUTER_ADDRESS = Web3.to_checksum_address("0x10ED43C718714eb63d5aA57B78B54704E256024E")
-bscscan_api = os.getenv("BSCSCAN_API_KEY")
-ROUTER_ABI = json.loads(requests.get(f"https://api.bscscan.com/api?module=contract&action=getabi&address=0x10ED43C718714eb63d5aA57B78B54704E256024E&apikey={bscscan_api}").json()["result"])
-router = w3.eth.contract(address=ROUTER_ADDRESS, abi=ROUTER_ABI)
+# === Router PancakeSwap, Uniswap, v.v. cho 4 chain ===
+ROUTERS = {
+    "bsc": {
+        "pancakeswap": {
+            "address": "0x10ED43C718714eb63d5aA57B78B54704E256024E",
+            "rpc": os.getenv("RPC_URL")
+        }
+    },
+    "eth": {
+        "uniswap": {
+            "address": "0x7a250d5630B4cF539739dF2C5dAcb4c659F2488D",
+            "rpc": os.getenv("RPC_URL_ETH")
+        }
+    },
+    "arbitrum": {
+        "sushiswap": {
+            "address": "0x1b02da8cb0d097eb8d57a175b88c7d8b47997506",
+            "rpc": os.getenv("RPC_URL_ARBITRUM")
+        }
+    },
+    "base": {
+        "baseswap": {
+            "address": "0x327Df1E6de05895d2ab08513aaDD9313Fe505d86",
+            "rpc": os.getenv("RPC_URL_BASE")
+        }
+    }
+}
+
+# === Địa chỉ ví lạnh ===
+COLD_WALLETS = {
+    "bsc": os.getenv("COLD_WALLET_BSC"),
+    "eth": os.getenv("COLD_WALLET_ETH"),
+    "arbitrum": os.getenv("COLD_WALLET_ARBITRUM"),
+    "base": os.getenv("COLD_WALLET_BASE")
+}
 
 # === Gửi Telegram ===
-def send_telegram(message):
+def send_telegram(msg):
     try:
-        url = f"https://api.telegram.org/bot{TELEGRAM_TOKEN}/sendMessage"
-        payload = {"chat_id": CHAT_ID, "text": message, "parse_mode": "Markdown"}
-        requests.post(url, data=payload)
-    except Exception as e:
-        print(f"Lỗi gửi Telegram: {e}")
-
-# === Giai đoạn 2: Quét Dexscreener ===
-def fetch_gecko_trending():
+        requests.post(f"https://api.telegram.org/bot{TELEGRAM_TOKEN}/sendMessage", data={
+            "chat_id": CHAT_ID,
+            "text": msg,
+            "parse_mode": "Markdown"
+        })
+    except:
+        pass
+# === Lọc scam nâng cao ===
+def is_token_safe(chain, token_address):
     try:
-        url = "https://api.geckoterminal.com/api/v2/networks/bsc/pools?page=1"
-        headers = {"Accept": "application/json"}
-        response = requests.get(url, headers=headers)
+        res = requests.get(f"https://api.honeypot.is/v1/TokenIsHoneypot", params={
+            "network": chain,
+            "token": token_address
+        })
+        data = res.json()
+        if data.get("honeypot", True):
+            send_telegram(f"🚫 Phát hiện honeypot ({chain}): {token_address}")
+            return False
+        return True
+    except:
+        return True
+# === Quét top token từ GeckoTerminal cho nhiều chain ===
+import requests
 
-        if response.status_code != 200:
-            print(f"❌ GeckoTerminal lỗi HTTP {response.status_code}")
-            return []
+def fetch_top_tokens_super(top_n_per_chain=3, min_liquidity=10000, min_volume=10000):
+    networks = {
+        "bsc": "pancakeswap",
+        "eth": "uniswap",
+        "arbitrum": "sushiswap",
+        "base": "baseswap"
+    }
+    super_tokens = []
 
-        data = response.json()["data"]
-        tokens = []
+    for chain in networks:
+        try:
+            url = f"https://api.geckoterminal.com/api/v2/networks/{chain}/pools?page=1"
+            headers = {"Accept": "application/json"}
+            response = requests.get(url, headers=headers)
+            if response.status_code != 200:
+                send_telegram(f"❌ GeckoTerminal lỗi {response.status_code} ({chain})")
+                continue
 
-        for item in data:
-            attr = item["attributes"]
-            tokens.append({
-                "name": attr["base_token"]["name"],
-                "symbol": attr["base_token"]["symbol"],
-                "address": attr["base_token"]["address"],
-                "price": float(attr["price_usd"]),
-                "volume24h": float(attr["volume_usd"]["h24"]),
-                "liquidity": float(attr["reserve_in_usd"]),
-                "url": f"https://www.geckoterminal.com/bsc/pools/{item['id']}"
-            })
+            pools = response.json().get("data", [])
+            count = 0
 
-        return tokens[:5]  # lấy top 5 token
-    except Exception as e:
-        error_msg = f"❌ Lỗi trong fetch_gecko_trending: {e}"
-        send_telegram(error_msg)
-        print(error_msg)
-        return []
+            for item in pools:
+                attr = item["attributes"]
+                liquidity = float(attr["reserve_in_usd"])
+                volume = float(attr["volume_usd"]["h24"])
+
+                if liquidity >= min_liquidity and volume >= min_volume:
+                    token_info = attr["base_token"]
+                    token_address = token_info["address"]
+
+                    # Kiểm tra scam trước khi thêm
+                    if is_token_safe(chain, token_address):
+                        super_tokens.append({
+                            "chain": chain,
+                            "dex": networks[chain],
+                            "token": token_address,
+                            "name": token_info["name"],
+                            "symbol": token_info["symbol"],
+                            "price": float(attr["price_usd"]),
+                            "liquidity": liquidity,
+                            "volume24h": volume,
+                            "url": f"https://www.geckoterminal.com/{chain}/pools/{item['id']}"
+                        })
+                        count += 1
+
+                    if count >= top_n_per_chain:
+                        break
+
+        except Exception as e:
+            send_telegram(f"❌ Lỗi fetch GeckoTerminal ({chain}): {e}")
+
+    return super_tokens
 
 
-# def filter_top_tokens(pairs, top_n=5):
-#     try:
-#         filtered = []
-#         for p in pairs:
-#             try:
-#                 if p.get("liquidity", {}).get("usd", 0) >= 20000 and p.get("txCount", {}).get("h1", 0) > 20:
-#                     filtered.append({
-#                         "name": p.get("baseToken", {}).get("name", "???"),
-#                         "symbol": p.get("baseToken", {}).get("symbol", "???"),
-#                         "address": p.get("baseToken", {}).get("address"),
-#                         "price": float(p.get("priceUsd", 0)),
-#                         "volume24h": float(p.get("volume", {}).get("h24", 0)),
-#                         "liquidity": float(p.get("liquidity", {}).get("usd", 0)),
-#                         "dex": p.get("dexId", "???"),
-#                         "url": p.get("url", "")
-#                     })
-#             except:
-#                 continue
-#
-#         return sorted(filtered, key=lambda x: x["volume24h"], reverse=True)[:top_n]
-#     except Exception as e:
-#         error_msg = f"❌ Lỗi trong filter_top_tokens: {e}"
-#         send_telegram(error_msg)
-#         print(error_msg)
-# === Giai đoạn 3: Mua token ===
-def auto_buy_token(token_address):
+# === Swap token theo chain ===
+def auto_buy_token_from_usdt(chain, dex, token_address, amount_in_usdt):
     try:
-        token_address = Web3.to_checksum_address(token_address)
+        from web3 import Web3
+        import json, time
 
-        # Lấy số dư BNB hiện tại và tính 90%
-        balance = w3.eth.get_balance(WALLET_ADDRESS)
-        bnb_total = w3.from_wei(balance, 'ether')
-        bnb_amount = round(bnb_total * 0.9, 6)
+        rpc = ROUTERS[chain][dex]["rpc"]
+        router_address = ROUTERS[chain][dex]["address"]
+        usdt_address = USDT_ADDRESS[chain]
+        weth_address = WETH_ADDRESS[chain]
 
-        if bnb_amount < 0.002:
-            print("⚠️ Số dư quá thấp, bỏ qua swap")
-            return
-        entry_price = get_token_price_usd(token_address)
-        deadline = int(time.time()) + 60 * 10
-        path = [Web3.to_checksum_address("0xBB4CdB9CBd36B01bD1cBaEBF2De08d9173bc095c"), token_address]
+        w3 = Web3(Web3.HTTPProvider(rpc))
+        account = Account.from_key(PRIVATE_KEY)
+        wallet_address = account.address
 
-        gas_price = w3.eth.gas_price
-        if gas_price > w3.to_wei(10, 'gwei'):
-            print(f"❌ Gas price cao ({w3.from_wei(gas_price, 'gwei')} Gwei), huỷ lệnh!")
-            return
+        with open("abis/router_abi.json", "r") as f:
+            router_abi = json.load(f)
+        router = w3.eth.contract(address=Web3.to_checksum_address(router_address), abi=router_abi)
 
-        txn = router.functions.swapExactETHForTokens(
-            0, path, WALLET_ADDRESS, deadline
+        # Kiểm tra cặp trực tiếp trước
+        if check_pair_exists(chain, token_address, usdt_address):
+            path = [Web3.to_checksum_address(usdt_address), Web3.to_checksum_address(token_address)]
+        else:
+            path = [
+                Web3.to_checksum_address(usdt_address),
+                Web3.to_checksum_address(weth_address),
+                Web3.to_checksum_address(token_address)
+            ]
+
+        tx = router.functions.swapExactTokensForTokensSupportingFeeOnTransferTokens(
+            w3.to_wei(amount_in_usdt, 'ether'),
+            0,
+            path,
+            wallet_address,
+            int(time.time()) + 600
         ).build_transaction({
-            'from': WALLET_ADDRESS,
-            'value': w3.to_wei(bnb_amount, 'ether'),
+            'from': wallet_address,
             'gas': 300000,
-            'gasPrice': gas_price,
-            'nonce': w3.eth.get_transaction_count(WALLET_ADDRESS),
+            'gasPrice': w3.eth.gas_price,
+            'nonce': w3.eth.get_transaction_count(wallet_address),
         })
 
-        signed_txn = w3.eth.account.sign_transaction(txn, private_key=PRIVATE_KEY)
-        tx_hash = w3.eth.send_raw_transaction(signed_txn.raw_transaction)
+        signed_tx = w3.eth.account.sign_transaction(tx, PRIVATE_KEY)
+        tx_hash = w3.eth.send_raw_transaction(signed_tx.rawTransaction)
 
-        send_telegram(f"🚀 Đã mua: `{token_address}`\n💰 Sử dụng {bnb_amount:.6f} BNB\n🔗 https://bscscan.com/tx/{tx_hash.hex()}")
-
+        send_telegram(f"🛒 Đã mua {token_address} bằng USDT trên {dex.upper()} ({chain})\n🔗 https://explorer.{chain}.org/tx/{tx_hash.hex()}")
         with open("buy_log.csv", "a") as f:
-            timestamp = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
-            f.write(f"{timestamp},{token_address},{entry_price},{bnb_amount},{tx_hash.hex()}\n")
+            f.write(f"{datetime.now()},{token['chain']},{token['dex']},{token['token']},{token['price']}\n")
 
-        return tx_hash.hex()
     except Exception as e:
-        error_msg = f"❌ Lỗi trong auto_buy_token: {e}"
-        send_telegram(error_msg)
-        print(error_msg)
-        return None
+        send_telegram(f"❌ Lỗi khi mua token từ USDT ({chain}): {e}")
 
-# === Giai đoạn 4: Theo dõi TP/SL ===
-def check_take_profit():
+def check_pair_exists(chain, tokenA, tokenB):
     try:
-        if not os.path.exists("buy_log.csv"): return
-        with open("buy_log.csv", "r") as f:
-            lines = f.readlines()
+        from web3 import Web3
+        import json
 
-        for line in lines:
-            ts, address, entry_price, bnb, tx = line.strip().split(",")
-            price_now = get_token_price_usd(address)
+        dex_name = list(ROUTERS[chain].keys())[0]  # Lấy dex đầu tiên cho chain đó
+        factory_address = ROUTERS[chain][dex_name]["factory"]
+        rpc = ROUTERS[chain][dex_name]["rpc"]
+        w3 = Web3(Web3.HTTPProvider(rpc))
+
+        with open("abis/factory_abi.json", "r") as f:
+            factory_abi = json.load(f)
+
+        factory = w3.eth.contract(address=Web3.to_checksum_address(factory_address), abi=factory_abi)
+        pair_address = factory.functions.getPair(tokenA, tokenB).call()
+
+        return pair_address != "0x0000000000000000000000000000000000000000"
+
+    except Exception as e:
+        print(f"⚠️ Lỗi khi kiểm tra cặp {tokenA}/{tokenB}: {e}")
+        return False
+
+
+
+# === Bán token và chuyển 50% về ví lạnh ===
+from web3 import Web3
+
+def auto_sell_to_usdt(chain, dex, token_address, amount):
+    try:
+        from web3 import Web3
+        import json, time
+
+        rpc = ROUTERS[chain][dex]["rpc"]
+        router_address = ROUTERS[chain][dex]["address"]
+        usdt_address = USDT_ADDRESS[chain]
+
+        w3 = Web3(Web3.HTTPProvider(rpc))
+        account = Account.from_key(PRIVATE_KEY)
+        wallet_address = account.address
+
+        with open("abis/router_abi.json", "r") as f:
+            router_abi = json.load(f)
+        router = w3.eth.contract(address=Web3.to_checksum_address(router_address), abi=router_abi)
+
+        path = [Web3.to_checksum_address(token_address), Web3.to_checksum_address(usdt_address)]
+
+        tx = router.functions.swapExactTokensForTokensSupportingFeeOnTransferTokens(
+            w3.to_wei(amount, 'ether'),
+            0,
+            path,
+            wallet_address,
+            int(time.time()) + 600
+        ).build_transaction({
+            'from': wallet_address,
+            'gas': 300000,
+            'gasPrice': w3.eth.gas_price,
+            'nonce': w3.eth.get_transaction_count(wallet_address),
+        })
+
+        signed_tx = w3.eth.account.sign_transaction(tx, PRIVATE_KEY)
+        tx_hash = w3.eth.send_raw_transaction(signed_tx.rawTransaction)
+
+        send_telegram(f"💸 Đã bán token {token_address} → USDT trên {dex.upper()} ({chain})\n🔗 https://explorer.{chain}.org/tx/{tx_hash.hex()}")
+        with open("buy_log.csv", "w") as f:
+            for l in lines:
+                if token_address not in l:
+                    f.write(l)
+
+    except Exception as e:
+        send_telegram(f"❌ Lỗi khi bán token {token_address} → USDT ({chain}): {e}")
+
+
+def auto_transfer_usdt_to_cold_wallet(chain):
+    try:
+        from web3 import Web3
+        import json
+
+        rpc = ROUTERS[chain]["pancakeswap"]["rpc"]  # chọn mặc định
+        if chain == "eth": rpc = ROUTERS[chain]["uniswap"]["rpc"]
+        elif chain == "arbitrum": rpc = ROUTERS[chain]["sushiswap"]["rpc"]
+        elif chain == "base": rpc = ROUTERS[chain]["baseswap"]["rpc"]
+
+        w3 = Web3(Web3.HTTPProvider(rpc))
+        account = Account.from_key(PRIVATE_KEY)
+        wallet_address = account.address
+        cold_wallet = COLD_WALLETS[chain]
+        usdt_address = USDT_ADDRESS[chain]
+
+        # Load ABI ERC20 chuẩn
+        with open("abis/erc20_abi.json", "r") as f:
+            erc20_abi = json.load(f)
+
+        usdt = w3.eth.contract(address=Web3.to_checksum_address(usdt_address), abi=erc20_abi)
+        balance = usdt.functions.balanceOf(wallet_address).call()
+        if balance == 0:
+            send_telegram(f"⚠️ Không có USDT để chuyển ({chain})")
+            return
+
+        tx = usdt.functions.transfer(
+            Web3.to_checksum_address(cold_wallet),
+            int(balance * 0.5)  # chuyển 50%
+        ).build_transaction({
+            'from': wallet_address,
+            'gas': 100000,
+            'gasPrice': w3.eth.gas_price,
+            'nonce': w3.eth.get_transaction_count(wallet_address),
+        })
+
+        signed_tx = w3.eth.account.sign_transaction(tx, PRIVATE_KEY)
+        tx_hash = w3.eth.send_raw_transaction(signed_tx.rawTransaction)
+
+        send_telegram(f"📤 Đã chuyển 50% USDT về ví lạnh ({chain})\n🔗 https://explorer.{chain}.org/tx/{tx_hash.hex()}")
+
+    except Exception as e:
+        send_telegram(f"❌ Lỗi chuyển USDT về ví lạnh ({chain}): {e}")
+
+
+# === Theo dõi và bán nếu TP/SL ===
+import os
+
+def monitor_and_sell():
+    if not os.path.exists("buy_log.csv"):
+        return
+
+    with open("buy_log.csv", "r") as f:
+        lines = f.readlines()
+
+    for line in lines:
+        try:
+            ts, chain, dex, token_address, entry_price = line.strip().split(",")
             entry_price = float(entry_price)
+            price_now = get_token_price_usd(chain, token_address)
+            if price_now == 0:
+                continue
+
+            amount = get_wallet_balance_eth(chain)
 
             if price_now >= entry_price * 2:
-                send_telegram(f"🎯 TP đạt X2 với `{address}`\nGiá vào: ${entry_price:.4f} → Hiện tại: ${price_now:.4f}")
-            elif price_now <= entry_price * 0.7:
-                send_telegram(f"⚠️ Coin `{address}` tụt mạnh\nGiá vào: ${entry_price:.4f} → Hiện tại: ${price_now:.4f}")
-    except Exception as e:
-        error_msg = f"❌ Lỗi trong check_take_profit: {e}"
-        send_telegram(error_msg)
-        print(error_msg)
+                print(f"🚀 X2: Bán và chuyển token {token_address} trên {chain}")
+                auto_sell_to_usdt(chain, dex, token_address, amount)
+                auto_transfer_usdt_to_cold_wallet(chain)  # Chỉ gọi khi X2
 
-# === Lấy giá token hiện tại từ GeckoTerminal API ===
-def get_token_price_usd(address):
+            elif price_now <= entry_price * 0.7:
+                print(f"⚠️ Giảm 30%: Chỉ bán token {token_address} trên {chain}")
+                auto_sell_to_usdt(chain, dex, token_address, amount)
+
+        except Exception as e:
+            print(f"❌ Lỗi monitor: {e}")
+
+# === Hàm lấy giá token từ GeckoTerminal ===
+def get_token_price_usd(chain, address):
     try:
-        url = f"https://api.geckoterminal.com/api/v2/simple/networks/bsc/token_price/{address}"
-        response = requests.get(url).json()
-        price = float(response['data']['attributes']['price_usd'])
-        return price
-    except Exception as e:
-        error_msg = f"❌ Lỗi trong get_token_price_usd: {e}"
-        send_telegram(error_msg)
-        print(error_msg)
+        url = f"https://api.geckoterminal.com/api/v2/simple/networks/{chain}/token_price/{address}"
+        res = requests.get(url).json()
+        return float(res['data']['attributes']['price_usd'])
+    except:
         return 0
 
-# =============================
-# Chạy toàn bộ luồng mỗi 4 giờ
-# =============================
-if __name__ == '__main__':
-    print("🚀 Đang chạy bot Altcoin Season Combo...")
-    # pairs = fetch_dexscreener_trending()
-    top_tokens = fetch_gecko_trending()
+# === Lấy số dư ETH trên từng chain ===
+def get_wallet_balance_eth(chain):
+    rpc = ROUTERS[chain][list(ROUTERS[chain].keys())[0]]["rpc"]
+    w3 = Web3(Web3.HTTPProvider(rpc))
+    return w3.from_wei(w3.eth.get_balance(Account.from_key(PRIVATE_KEY).address), 'ether')
 
-    for token in top_tokens:
-        msg = f"🧠 Phát hiện coin mới: [{token['symbol']}]({token['url']})\n💧 Liquidity: ${token['liquidity']:,}\n📊 Volume 24h: ${token['volume24h']:,}\n💰 Giá: ${token['price']:.6f}"
-        send_telegram(msg)
-        auto_buy_token(token['address'])
+def is_token_already_bought(token_address):
+    if not os.path.exists("buy_log.csv"):
+        return False
+    with open("buy_log.csv", "r") as f:
+        return token_address in f.read()
 
-    check_take_profit()
+
+# === Vòng lặp 4h kiểm tra token và thực hiện giao dịch ===
+def main_loop():
+    while True:
+        print("\n🚀 Bắt đầu vòng quét Altseason")
+        tokens = fetch_top_tokens_super()
+        if is_token_already_bought(tokens["tokens"]):
+            continue
+
+        for token in tokens:
+            send_telegram(
+                f"🧠 Phát hiện token `{token['symbol']}` trên *{token['chain']}*\n"
+                f"💧 Liquidity: ${token['liquidity']:,}\n"
+                f"📊 Volume 24h: ${token['volume24h']:,}\n"
+                f"💰 Giá: ${token['price']:.6f}\n🔗 [Link]({token['url']})"
+            )
+            auto_buy_token_from_usdt(token["chain"], token["dex"], token["token"], 100)  # ví dụ 100 USDT
+        monitor_and_sell()
+        print("⏳ Ngủ 4 tiếng...")
+        time.sleep(60 * 60 * 4)
+
+if __name__ == "__main__":
+    main_loop()

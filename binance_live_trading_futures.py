@@ -142,7 +142,8 @@ def set_leverage(symbol="BTCUSDT", leverage=2):
     params = {
         "symbol": symbol,
         "leverage": leverage,
-        "timestamp": timestamp
+        "timestamp": timestamp,
+        "recvWindow": 5000  # Cho phép lệch 5 giây
     }
     query_string = "&".join([f"{k}={v}" for k, v in params.items()])
     signature = create_signature(query_string)
@@ -277,7 +278,12 @@ def make_decision(df):
                 if order:
                     position = 0
                     balance_after = get_balance()
-                    send_tele(f"✅ Đóng LONG tại {current_price:.2f}\n💰 Balance sau đóng lệnh: {balance_after:.2f} USDT")
+                    if balance_after is None:
+                        send_tele(f"✅ Đóng LONG tại {current_price:.2f}\n💰 Không lấy được balance sau lệnh.")
+                    else:
+                        send_tele(
+                            f"✅ Đóng LONG tại {current_price:.2f}\n💰 Balance sau đóng lệnh: {balance_after:.2f} USDT")
+
                     if os.path.exists(POSITION_STATE_FILE):
                         os.remove(POSITION_STATE_FILE)
                     log_trade(position, qty, current_price, notional)
@@ -292,7 +298,11 @@ def make_decision(df):
                 if order:
                     position = 0
                     balance_after = get_balance()
-                    send_tele(f"✅ Đóng SHORT tại {current_price:.2f}\n💰 Balance sau đóng lệnh: {balance_after:.2f} USDT")
+                    if balance_after is None:
+                        send_tele(f"✅ Đóng SHORT tại {current_price:.2f}\n💰 Không lấy được balance sau lệnh.")
+                    else:
+                        send_tele(f"✅ Đóng SHORT tại {current_price:.2f}\n💰 Balance sau đóng lệnh: {balance_after:.2f} USDT")
+
                     if os.path.exists(POSITION_STATE_FILE):
                         os.remove(POSITION_STATE_FILE)
                     log_trade(position, qty, current_price, notional)
@@ -319,13 +329,26 @@ def get_balance():
         headers = {"X-MBX-APIKEY": API_KEY}
         r = requests.get(f"{url}?{query}&signature={signature}", headers=headers)
         data = r.json()
-        return float([x for x in data if x['asset'] == 'USDT'][0]['availableBalance'])
+
+        # Nếu data là list, tìm balance USDT
+        if isinstance(data, list):
+            usdt_info = next((x for x in data if x.get("asset") == "USDT"), None)
+            if usdt_info:
+                return float(usdt_info["availableBalance"])
+
+        # Nếu đến đây thì không thành công
+        send_tele("⚠️ Không thể lấy balance: response không hợp lệ.")
+        print("⚠️ Không thể lấy balance: response không hợp lệ.")
+        return None
+
     except Exception as e:
         error_msg = f"❌ Lỗi trong get_balance: {e}"
         send_tele(error_msg)
         print(error_msg)
         with open(LOG_FILE, "a") as f:
             f.write(error_msg + "\n")
+        return None
+
 # ============================
 # 📦 Tính khối lượng lệnh từ số dư USDT
 # ============================

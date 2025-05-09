@@ -13,8 +13,8 @@ import matplotlib.pyplot as plt
 import random
 import tensorflow as tf
 import joblib
-from tensorflow.keras.models import Sequential
-from tensorflow.keras.layers import LSTM, Dense, Input, Dropout
+from tensorflow.keras.models import Sequential, Model
+from tensorflow.keras.layers import LSTM, Dense, Input, Dropout, Attention
 from tensorflow.keras.callbacks import EarlyStopping
 from sklearn.preprocessing import MinMaxScaler
 from ta.trend import SMAIndicator, EMAIndicator, MACD, ADXIndicator
@@ -36,12 +36,10 @@ load_dotenv(".env")
 telegram_token = os.getenv("TELEGRAM_TOKEN")
 telegram_chat_id = os.getenv("TELEGRAM_CHAT_ID")
 
-
 # ============================
 # 🗂 Mount Google Drive
 # ============================
 drive.mount('/content/drive')
-
 
 # ============================
 # 🚀 Cố định seed random để ổn định
@@ -69,7 +67,7 @@ data_file = list(uploaded.keys())[0]
 def load_and_prepare_data(file_path):
     df = pd.read_csv(file_path)
     df.columns = df.columns.str.strip()
-    df.reset_index(inplace=True)  # 👉 Giải phóng timestamp ra khỏi index nếu có
+    df.reset_index(inplace=True)
     if df["timestamp"].dtype in ["int64", "float64"]:
         df["timestamp"] = pd.to_datetime(df["timestamp"], unit='ms', utc=True)
     else:
@@ -95,191 +93,188 @@ def load_and_prepare_data(file_path):
     return df
 
 # ============================
-# 🤖 Huấn luyện mô hình
+# 🔧 Tạo mô hình LSTM + Attention
+# ============================
+def create_lstm_attention_model(input_shape):
+    inp = Input(shape=input_shape)
+    x = LSTM(64, return_sequences=True)(inp)
+    x = Dropout(0.2)(x)
+    x = LSTM(64, return_sequences=True)(x)
+    attention = Attention()([x, x])
+    x = tf.keras.layers.GlobalAveragePooling1D()(attention)
+    out = Dense(1)(x)
+    model = Model(inputs=inp, outputs=out)
+    model.compile(optimizer="adam", loss="mse")
+    return model
+
+# ============================
+# 🤖 Train các mô hình AI, TP, SL
 # ============================
 def train_model(df, lookback=100):
-    feature_cols = ["close", "sma", "ema", "macd", "macd_signal", "macd_diff", "rsi", "bb_bbm", "bb_bbh", "bb_bbl", "atr", "adx"]
+    timestamp = datetime.datetime.now().strftime("%Y%m%d_%H%M%S")
+    model_name = f"ai15m_model_{timestamp}"
+    feature_cols = ["close", "sma", "ema", "macd", "macd_signal", "macd_diff",
+                    "rsi", "bb_bbm", "bb_bbh", "bb_bbl", "atr", "adx"]
+    scaler = MinMaxScaler()
+    scaled = scaler.fit_transform(df[feature_cols])
+    X, y = [], []
+    for i in range(lookback, len(scaled)):
+        X.append(scaled[i - lookback:i])
+        y.append(scaled[i][0])
+    X, y = np.array(X), np.array(y)
+
+    model = create_lstm_attention_model(input_shape=(lookback, len(feature_cols)))
+    model.fit(X, y, epochs=10, batch_size=64, verbose=0, callbacks=[EarlyStopping(patience=2)],validation_split=0.1)
+    model.save(f"models/{model_name}.keras")
+    joblib.dump(scaler, f"models/{model_name}.pkl")
+    return model, scaler, model_name
+
+def train_tp_model(df, lookback=100):
+    feature_cols = ["close", "sma", "ema", "macd", "macd_signal", "macd_diff",
+                    "rsi", "bb_bbm", "bb_bbh", "bb_bbl", "atr", "adx"]
     scaler = MinMaxScaler()
     scaled_data = scaler.fit_transform(df[feature_cols])
 
-    X, y = [], []
-    for i in range(lookback, len(scaled_data)):
+    X, y_tp = [], []
+    for i in range(lookback, len(scaled_data)-1):
         X.append(scaled_data[i - lookback:i])
-        y.append(scaled_data[i][0])
-    X, y = np.array(X), np.array(y)
+        close_now = df["close"].iloc[i]
+        close_next = df["close"].iloc[i+1]
+        atr_now = df["atr"].iloc[i]
+        y_tp.append(min(close_next, close_now + atr_now * 4))
 
-    # Tạo tên theo timestamp
-    timestamp = datetime.datetime.now().strftime("%Y%m%d_%H%M%S")
-    model_name = f"ai15m_model_{timestamp}"
-    model_path = f"models/{model_name}.keras"
-    scaler_path = f"models/{model_name}.pkl"
+    X, y_tp = np.array(X), np.array(y_tp)
     model = Sequential([
         Input(shape=(lookback, len(feature_cols))),
-        LSTM(64, return_sequences=True),
-        Dropout(0.2),
-        LSTM(64),
-        Dropout(0.2),
+        LSTM(32, return_sequences=True),
+        LSTM(32),
         Dense(1)
     ])
-    model.compile(optimizer='adam', loss='mean_squared_error')
-    early_stop = EarlyStopping(monitor='loss', patience=2, restore_best_weights=True)
-    model.fit(X, y, epochs=10, batch_size=64, verbose=0, callbacks=[early_stop])
+    model.compile(optimizer="adam", loss="mse")
+    model.fit(X, y_tp, epochs=5, batch_size=32, verbose=0)
+    return model, scaler
 
-    # Lưu model và scaler
-    model.save(model_path)
-    joblib.dump(scaler, scaler_path)
+def train_sl_model(df, lookback=100):
+    feature_cols = ["close", "sma", "ema", "macd", "macd_signal", "macd_diff",
+                    "rsi", "bb_bbm", "bb_bbh", "bb_bbl", "atr", "adx"]
+    scaler = MinMaxScaler()
+    scaled_data = scaler.fit_transform(df[feature_cols])
 
-    print(f"✅ Đã lưu model tại: {model_path}")
-    print(f"✅ Đã lưu scaler tại: {scaler_path}")
+    X, y_sl = [], []
+    for i in range(lookback, len(scaled_data)-1):
+        X.append(scaled_data[i - lookback:i])
+        close_now = df["close"].iloc[i]
+        close_next = df["close"].iloc[i+1]
+        atr_now = df["atr"].iloc[i]
+        y_sl.append(max(close_next, close_now - atr_now * 1.5))
 
-    return model, scaler, model_name
-
-# ============================
-# 📈 Backtest chiến lược
-# ============================
-def backtest_strategy(model, scaler, df, initial_balance=5000, lookback=100):
-    feature_cols = ["close", "sma", "ema", "macd", "macd_signal", "macd_diff", "rsi", "bb_bbm", "bb_bbh", "bb_bbl", "atr", "adx"]
-
-    sequences = np.array([scaler.transform(df[feature_cols].iloc[i - lookback:i]) for i in range(lookback, len(df))])
-    predictions_scaled = model.predict(sequences, verbose=0).flatten()
-
-    dummy = np.zeros((len(predictions_scaled), len(feature_cols)))
-    dummy[:, 0] = predictions_scaled
-    predictions = scaler.inverse_transform(dummy)[:, 0]
-
-    current_price = df["close"].iloc[lookback:].values
-    atr = df["atr"].iloc[lookback:].values
-    macd_bullish = (df["macd"].iloc[lookback:].values - df["macd_signal"].iloc[lookback:].values) > -15
-    rsi_ok = df["rsi"].iloc[lookback:].values > 40
-    price_near_bottom = current_price <= df["close"].iloc[lookback - 20:-20].rolling(20).min().values * 1.05
-    adx_ok = df["adx"].iloc[lookback:].values > 20
-    ai_confidence = predictions > current_price * 1.001
-
-    volume = df["volume"].iloc[lookback:].values
-    volume_ma10 = df["volume"].rolling(10).mean().iloc[lookback:].values
-    volume_breakout = volume > volume_ma10
-
-    buy_condition = ai_confidence & macd_bullish & rsi_ok & price_near_bottom & adx_ok & volume_breakout
-
-    balance = initial_balance
-    position = 0
-    buy_price, take_profit, stop_loss = 0, 0, 0
-    trade_log = []
-    equity_curve = []
-    timestamps = df["timestamp"].iloc[lookback:].values
-    win_count, loss_count = 0, 0
-
-    for i in range(len(current_price)):
-        price = current_price[i]
-        timestamp = timestamps[i]
-        predicted_close = predictions[i]
-        if position == 0 and buy_condition[i]:
-            position = 1
-            buy_price = price
-            mode = "fixed"
-            if mode == "fixed":
-                take_profit = round(buy_price * 1.004, 2)
-                stop_loss = round(buy_price * 0.996, 2)
-            elif mode == "adaptive":
-                take_profit = min(predicted_close, buy_price + atr[i] * 4)
-                stop_loss = buy_price - atr[i] * 1.5
-            trade_log.append(f"Mua tại {buy_price:.2f} | TP: {take_profit:.2f} | SL: {stop_loss:.2f}")
-
-        elif position == 1:
-            if price >= take_profit:
-                gain_pct = (take_profit - buy_price) / buy_price
-                gain_usdt = balance * gain_pct
-                old_balance = balance
-                balance += gain_usdt
-                trade_log.append({
-                    "timestamp": timestamp,
-                    "action": "TP",
-                    "buy_price": round(buy_price, 2),
-                    "sell_price": round(price, 2),
-                    "gain_pct": round(gain_pct * 100, 2),
-                    "gain_usdt": round(gain_usdt, 2),
-                    "balance_before": round(old_balance, 2),
-                    "balance_after": round(balance, 2)
-                })
-                win_count += 1
-                position = 0
-            elif price <= stop_loss:
-                loss_pct = (buy_price - stop_loss) / buy_price
-                loss_usdt = balance * loss_pct
-                old_balance = balance
-                balance -= loss_usdt
-                trade_log.append({
-                    "timestamp": timestamp,
-                    "action": "SL",
-                    "buy_price": round(buy_price, 2),
-                    "sell_price": round(price, 2),
-                    "gain_pct": round(-loss_pct * 100, 2),
-                    "gain_usdt": round(-loss_usdt, 2),
-                    "balance_before": round(old_balance, 2),
-                    "balance_after": round(balance, 2)
-                })
-                loss_count += 1
-                position = 0
-
-        if position == 0:
-            equity_curve.append(balance)
-
-    winrate = (win_count / (win_count + loss_count)) * 100 if (win_count + loss_count) > 0 else 0
-
-    plt.figure(figsize=(12, 6))
-    plt.plot(timestamps[:len(equity_curve)], equity_curve)
-    plt.title("Equity Curve")
-    plt.xlabel("Time")
-    plt.ylabel("Balance (USDT)")
-    plt.tight_layout()
-    plt.savefig("backtest_results/equity_curve.png")
-    plt.close()
-
-    pd.DataFrame(trade_log).to_csv("backtest_results/trade_log.csv", index=False, encoding="utf-8-sig")
-
-    if balance >= 5500:
-        timestamp = datetime.datetime.now().strftime("%Y%m%d_%H%M%S")
-        backup_dir = f"models/backup/balance{int(balance)}_{timestamp}"
-        os.makedirs(backup_dir, exist_ok=True)
-        shutil.copy(f"models/{model_name}.keras", os.path.join(backup_dir, "model.keras"))
-        shutil.copy(f"models/{model_name}.pkl", os.path.join(backup_dir, "scaler.pkl"))
-
-    return balance, winrate
+    X, y_sl = np.array(X), np.array(y_sl)
+    model = Sequential([
+        Input(shape=(lookback, len(feature_cols))),
+        LSTM(32, return_sequences=True),
+        LSTM(32),
+        Dense(1)
+    ])
+    model.compile(optimizer="adam", loss="mse")
+    model.fit(X, y_sl, epochs=5, batch_size=32, verbose=0)
+    return model, scaler
 
 # ============================
-# 🏁 Chạy train + backtest 30 lần và auto gửi báo cáo
+# 📈 Backtest kết hợp AI + TP + SL
 # ============================
+def backtest(df, ai_model, ai_scaler, tp_model, tp_scaler, sl_model, sl_scaler, lookback=100, atr_tp_factor=4, atr_sl_factor=1.5):
+    try:
+        feature_cols = ["close", "sma", "ema", "macd", "macd_signal", "macd_diff",
+                        "rsi", "bb_bbm", "bb_bbh", "bb_bbl", "atr", "adx"]
+        fee_rate = 0.001
+        risk_per_trade = 0.02  # Rủi ro 2% mỗi giao dịch
 
+        scaled = ai_scaler.transform(df[feature_cols])
+        X = np.zeros((len(df) - lookback, lookback, len(feature_cols)))
+        for i in range(lookback, len(df)):
+            X[i - lookback] = scaled[i - lookback:i]
+        pred_scaled = ai_model.predict(X, verbose=0).flatten()
+        dummy = np.tile(scaled[lookback:, -1], (len(feature_cols), 1)).T
+        dummy[:, 0] = pred_scaled
+        preds = ai_scaler.inverse_transform(dummy)[:, 0]
+
+        df = df.iloc[lookback:].copy()
+        df["predicted_close"] = preds
+
+        tp_scaled = tp_scaler.transform(df[feature_cols])
+        X_tp = np.zeros((len(df) - lookback, lookback, len(feature_cols)))
+        for i in range(lookback, len(df)):
+            X_tp[i - lookback] = tp_scaled[i - lookback:i]
+        df = df.iloc[lookback:].copy()
+        df["predicted_tp"] = tp_model.predict(X_tp, verbose=0).flatten() * df["close"]
+
+        sl_scaled = sl_scaler.transform(df[feature_cols])
+        X_sl = np.zeros((len(df) - lookback, lookback, len(feature_cols)))
+        for i in range(lookback, len(df)):
+            X_sl[i - lookback] = sl_scaled[i - lookback:i]
+        df["predicted_sl"] = sl_model.predict(X_sl, verbose=0).flatten() * df["close"]
+
+        balance = 5000
+        position = 0
+        trades = []
+        trailing_sl = 0
+        position_size = 0
+
+        for i, row in df.iterrows():
+            if position == 0 and row["predicted_close"] > row["close"] * 1.0005 and row["rsi"] < 30 and row["macd"] > row["macd_signal"] and row["adx"] > 25:
+                buy_price = row["close"]
+                tp = row["predicted_tp"]
+                sl = row["predicted_sl"]
+                position_size = (balance * risk_per_trade) / (buy_price - sl)
+                position = 1
+                trailing_sl = sl
+                balance -= position_size * buy_price * fee_rate
+                trades.append([row["timestamp"], "BUY", round(buy_price, 2), "", "", round(balance, 2)])
+            elif position == 1:
+                trailing_sl = max(trailing_sl, row["close"] - row["atr"] * atr_sl_factor)
+                if row["close"] >= tp or row["close"] <= trailing_sl:
+                    sell_price = row["close"]
+                    pnl = position_size * (sell_price - buy_price)
+                    balance += pnl
+                    balance -= position_size * sell_price * fee_rate
+                    trades.append([row["timestamp"], "SELL", round(buy_price, 2), round(sell_price, 2),
+                                   round(pnl, 2), round(balance, 2)])
+                    position = 0
+
+        trades_df = pd.DataFrame(trades, columns=["timestamp", "action", "buy_price", "sell_price", "pnl_usdt", "balance"])
+        trades_df.to_csv("backtest_results/trade_log.csv", index=False)
+
+        win_rate = len(trades_df[trades_df["pnl_usdt"] > 0]) / len(trades_df[trades_df["pnl_usdt"] != 0]) if len(trades_df) > 0 else 0
+        profit_factor = trades_df[trades_df["pnl_usdt"] > 0]["pnl_usdt"].sum() / abs(trades_df[trades_df["pnl_usdt"] < 0]["pnl_usdt"].sum()) if trades_df[trades_df["pnl_usdt"] < 0]["pnl_usdt"].sum() != 0 else float('inf')
+
+        print(f"\nKết quả: Final Balance = {round(balance, 2)} USDT, Win Rate = {win_rate:.2%}, Profit Factor = {profit_factor:.2f}")
+        plt.figure(figsize=(10, 4))
+        plt.plot(trades_df["balance"].dropna())
+        plt.title("Equity Curve")
+        plt.tight_layout()
+        plt.savefig("backtest_results/equity_curve.png")
+        plt.close()
+
+        return balance, win_rate, profit_factor
+    except Exception as e:
+        print(f"Error in backtest: {e}")
+        return 0, 0, 0
+
+# ============================
+# 🔁 Train và backtest 30 lần
+# ============================
 df = load_and_prepare_data(data_file)
 best_balance = 0
-
 for i in range(30):
-    print(f"\nVòng train-backtest {i + 1}/30")
-    model, scaler, model_name = train_model(df, lookback=100)
-    balance, winrate = backtest_strategy(model, scaler, df, initial_balance=5000)
+    print(f"\nVòng train-backtest {i+1}/30")
+    ai_model, ai_scaler, model_name = train_model(df)
+    tp_model, tp_scaler = train_tp_model(df)
+    sl_model, sl_scaler = train_sl_model(df)
+    balance = backtest(df, ai_model, ai_scaler, tp_model, tp_scaler, sl_model, sl_scaler)
 
     if balance > best_balance:
         best_balance = balance
-        print(f"🔍 Model mới có balance tốt hơn: {best_balance:.2f} USDT")
+        ai_model.save("models/best_model.keras")
+        joblib.dump(ai_scaler, "models/best_scaler.pkl")
 
 print(f"\n📊 Tốt nhất sau 30 lần: Balance: {best_balance:.2f} USDT")
-
-os.system('zip -r models_backup.zip models/backup backtest_results')
-shutil.copy('models_backup.zip', '/content/drive/MyDrive/models_backup.zip')
-
-with open('models_backup.zip', 'rb') as f:
-    response = requests.post(
-        f'https://api.telegram.org/bot{telegram_token}/sendDocument?chat_id={telegram_chat_id}',
-        files={'document': f}
-    )
-
-if response.status_code == 200:
-    print("✅ Đã gửi file models_backup.zip về Telegram!")
-else:
-    print("❌ Lỗi gửi file về Telegram:", response.text)
-
-report = f"Tốt nhất sau 30 lần:\nBalance: {best_balance:.2f} USDT"
-requests.post(
-    f'https://api.telegram.org/bot{telegram_token}/sendMessage',
-    data={'chat_id': telegram_chat_id, 'text': report}
-)

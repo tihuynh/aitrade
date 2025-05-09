@@ -5,6 +5,7 @@
 
 import os
 import shutil
+import csv
 import datetime
 import numpy as np
 import pandas as pd
@@ -118,74 +119,201 @@ def train_model(df, lookback=100, model_index=0):
 # 📈 Backtest chiến lược Futures
 # ============================
 def backtest_strategy(model, scaler, df, initial_balance=5000, lookback=100, leverage=2):
-    feature_cols = ["close", "sma", "ema", "macd", "macd_signal", "macd_diff", "rsi", "bb_bbm", "bb_bbh", "bb_bbl", "atr", "adx"]
-    sequences = np.array([scaler.transform(df[feature_cols].iloc[i - lookback:i]) for i in range(lookback, len(df))])
+    # feature_cols = ["close", "sma", "ema", "macd", "macd_signal", "macd_diff", "rsi", "bb_bbm", "bb_bbh", "bb_bbl", "atr", "adx"]
+    # sequences = np.array([scaler.transform(df[feature_cols].iloc[i - lookback:i]) for i in range(lookback, len(df))])
+    # predictions_scaled = model.predict(sequences, verbose=0).flatten()
+    #
+    # dummy = np.zeros((len(predictions_scaled), len(feature_cols)))
+    # dummy[:, 0] = predictions_scaled
+    # predictions = scaler.inverse_transform(dummy)[:, 0]
+    #
+    # close_prices = df["close"].iloc[lookback:].values
+    # atr = df["atr"].iloc[lookback:].values
+    # timestamps = df["timestamp"].iloc[lookback:].values
+    #
+    # macd_bullish = (df["macd"].iloc[lookback:].values - df["macd_signal"].iloc[lookback:].values) > -15
+    # rsi_ok = df["rsi"].iloc[lookback:].values > 40
+    # price_near_bottom = close_prices <= df["close"].iloc[lookback - 20:-20].rolling(20).min().values * 1.05
+    # adx_ok = df["adx"].iloc[lookback:].values > 20
+    #
+    # ai_confidence_long = predictions > close_prices * 1.001
+    # ai_confidence_short = predictions < close_prices * 0.999
+    #
+    # buy_condition = ai_confidence_long & macd_bullish & rsi_ok & price_near_bottom & adx_ok
+    # sell_condition = ai_confidence_short & (~macd_bullish) & (~rsi_ok) & adx_ok
+    #
+    # balance = initial_balance
+    # position = 0
+    # entry_price, entry_balance = 0, 0
+    # direction = ""
+    # wins, losses = 0, 0
+    #
+    # os.makedirs("logs", exist_ok=True)
+    # log_path = "logs/trade_log.csv"
+    #
+    # with open(log_path, mode="w", newline="", encoding="utf-8") as file:
+    #     writer = csv.writer(file)
+    #     writer.writerow([
+    #         "timestamp", "type", "entry_price", "exit_price",
+    #         "pnl_percent", "pnl_usdt", "balance_before", "balance_after"
+    #     ])
+    #
+    #     for i in range(len(close_prices)):
+    #         price = close_prices[i]
+    #         timestamp = timestamps[i]
+    #
+    #         if position == 0:
+    #             if buy_condition[i]:
+    #                 position = 1
+    #                 direction = "LONG"
+    #                 entry_price = price
+    #                 entry_balance = balance
+    #                 print(f"🟢 Mở LONG tại {entry_price:.2f} | Balance: {entry_balance:.2f} USDT")
+    #             elif sell_condition[i]:
+    #                 position = 1
+    #                 direction = "SHORT"
+    #                 entry_price = price
+    #                 entry_balance = balance
+    #                 print(f"🔴 Mở SHORT tại {entry_price:.2f} | Balance: {entry_balance:.2f} USDT")
+    #
+    #         elif position == 1:
+    #             exit = False
+    #             change = 0
+    #
+    #             if direction == "LONG":
+    #                 change = (price - entry_price) / entry_price
+    #                 if price >= entry_price * 1.004:
+    #                     exit = True
+    #                     result = "✅ TP"
+    #                 elif price <= entry_price * 0.996:
+    #                     exit = True
+    #                     result = "❌ SL"
+    #
+    #             elif direction == "SHORT":
+    #                 change = (entry_price - price) / entry_price
+    #                 if price <= entry_price * 0.996:
+    #                     exit = True
+    #                     result = "✅ TP"
+    #                 elif price >= entry_price * 1.004:
+    #                     exit = True
+    #                     result = "❌ SL"
+    #
+    #             if exit:
+    #                 pnl = change * (entry_balance * leverage)
+    #                 balance += pnl
+    #                 if pnl >= 0:
+    #                     wins += 1
+    #                 else:
+    #                     losses += 1
+    #
+    #                 print(f"{result} {direction} tại {price:.2f}")
+    #                 print(f"   ↳ % Lãi/Lỗ: {change * 100:.2f}% | PnL: {pnl:.2f} USDT")
+    #                 print(f"   ↳ Balance: {entry_balance:.2f} → {balance:.2f} USDT\n")
+    #
+    #                 writer.writerow([
+    #                     timestamp, direction, f"{entry_price:.2f}", f"{price:.2f}",
+    #                     f"{change * 100:.2f}", f"{pnl:.2f}", f"{entry_balance:.2f}", f"{balance:.2f}"
+    #                 ])
+    #
+    #                 position = 0
+    #
+    # winrate = (wins / (wins + losses)) * 100 if (wins + losses) > 0 else 0
+    # return balance, winrate
+    feature_cols = ["close", "sma", "ema", "macd", "macd_signal", "macd_diff",
+                    "rsi", "bb_bbm", "bb_bbh", "bb_bbl", "atr", "adx"]
+
+    df = df.copy()
+    df.reset_index(drop=True, inplace=True)
+
+    # Chuẩn bị dữ liệu cho AI
+    sequences = np.array([scaler.transform(df[feature_cols].iloc[i - lookback:i])
+                          for i in range(lookback, len(df))])
     predictions_scaled = model.predict(sequences, verbose=0).flatten()
 
     dummy = np.zeros((len(predictions_scaled), len(feature_cols)))
     dummy[:, 0] = predictions_scaled
     predictions = scaler.inverse_transform(dummy)[:, 0]
 
-    close_prices = df["close"].iloc[lookback:].values
-    atr = df["atr"].iloc[lookback:].values
-    timestamps = df["timestamp"].iloc[lookback:].values
-
-    macd_bullish = (df["macd"].iloc[lookback:].values - df["macd_signal"].iloc[lookback:].values) > -15
-    rsi_ok = df["rsi"].iloc[lookback:].values > 40
-    price_near_bottom = close_prices <= df["close"].iloc[lookback - 20:-20].rolling(20).min().values * 1.05
-    adx_ok = df["adx"].iloc[lookback:].values > 20
-
-    ai_confidence_long = predictions > close_prices * 1.001
-    ai_confidence_short = predictions < close_prices * 0.999
-
-    buy_condition = ai_confidence_long & macd_bullish & rsi_ok & price_near_bottom & adx_ok
-    sell_condition = ai_confidence_short & (~macd_bullish) & (~rsi_ok) & adx_ok
-
     balance = initial_balance
     position = 0
-    entry_price, take_profit, stop_loss = 0, 0, 0
+    entry_price, entry_balance = 0, 0
     direction = ""
     wins, losses = 0, 0
 
-    for i in range(len(close_prices)):
-        price = close_prices[i]
-        if position == 0:
-            if buy_condition[i]:
-                position = 1
-                direction = "LONG"
-                entry_price = price
-            elif sell_condition[i]:
-                position = 1
-                direction = "SHORT"
-                entry_price = price
+    os.makedirs("logs", exist_ok=True)
+    log_path = "logs/trade_log.csv"
+    with open(log_path, mode="w", newline="", encoding="utf-8") as file:
+        writer = csv.writer(file)
+        writer.writerow([
+            "timestamp", "type", "entry_price", "exit_price",
+            "pnl_percent", "pnl_usdt", "balance_before", "balance_after"
+        ])
 
-        elif position == 1:
-            if direction == "LONG":
-                if price >= entry_price * 1.004:
-                    profit = leverage * atr[i] * 2 / entry_price
-                    balance *= 1 + profit
-                    wins += 1
-                    position = 0
-                elif price <= entry_price * 0.996:
-                    loss = leverage * atr[i] * 1.5 / entry_price
-                    balance *= 1 - loss
-                    losses += 1
-                    position = 0
-            elif direction == "SHORT":
-                if price <= entry_price * 0.996:
-                    profit = leverage * atr[i] * 2 / entry_price
-                    balance *= 1 + profit
-                    wins += 1
-                    position = 0
-                elif price >= entry_price * 1.004:
-                    loss = leverage * atr[i] * 1.5 / entry_price
-                    balance *= 1 - loss
-                    losses += 1
+        for i in range(lookback + 1, len(df)):
+            row_prev = df.iloc[i - 1]  # nến đã đóng
+            row_now = df.iloc[i]  # giá hiện tại
+            current_price = row_now["close"]
+            atr = row_prev["atr"]
+            predicted_price = predictions[i - lookback - 1]
+            timestamp = str(row_now["timestamp"])
+
+            # Bỏ nếu ATR quá cao (>0.8%)
+            if atr / current_price > 0.008:
+                continue
+
+            if position == 0:
+                # Điều kiện vào LONG
+                if (predicted_price > current_price * 1.0005 and
+                        row_prev["rsi"] > 40 and
+                        row_prev["adx"] > 20 and
+                        row_prev["ema"] > row_prev["sma"]):
+
+                    position = 1
+                    direction = "LONG"
+                    entry_price = current_price
+                    entry_balance = balance
+
+                # Điều kiện vào SHORT
+                elif (predicted_price < current_price * 0.9995 and
+                      row_prev["adx"] > 20 and
+                      row_prev["ema"] < row_prev["sma"]):
+
+                    position = -1
+                    direction = "SHORT"
+                    entry_price = current_price
+                    entry_balance = balance
+
+            elif position != 0:
+                tp_hit, sl_hit = False, False
+                tp = entry_price + atr * 2.5 if position == 1 else entry_price - atr * 2.5
+                sl = entry_price - atr * 2.0 if position == 1 else entry_price + atr * 2.0
+
+                if (position == 1 and current_price >= tp) or (position == -1 and current_price <= tp):
+                    tp_hit = True
+                elif (position == 1 and current_price <= sl) or (position == -1 and current_price >= sl):
+                    sl_hit = True
+
+                if tp_hit or sl_hit:
+                    if position == 1:
+                        change = (current_price - entry_price) / entry_price
+                    else:
+                        change = (entry_price - current_price) / entry_price
+
+                    pnl = change * (entry_balance * leverage)
+                    balance += pnl
+                    if pnl >= 0:
+                        wins += 1
+                    else:
+                        losses += 1
+
+                    writer.writerow([
+                        timestamp, direction, f"{entry_price:.2f}", f"{current_price:.2f}",
+                        f"{change * 100:.2f}", f"{pnl:.2f}", f"{entry_balance:.2f}", f"{balance:.2f}"
+                    ])
                     position = 0
 
     winrate = (wins / (wins + losses)) * 100 if (wins + losses) > 0 else 0
     return balance, winrate
-
 # ============================
 # 🔁 Train + Backtest 30 lần
 # ============================

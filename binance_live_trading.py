@@ -289,6 +289,11 @@ def live_trading():
         # Mới (nới lỏng):
         adx_ok = df["adx"].iloc[-2] > 15
         ai_confidence = predicted_close > current_price * 1.001
+        volume = df["volume"].iloc[lookback:].values
+        volume_ma10 = df["volume"].rolling(10).mean().iloc[lookback:].values
+        volume_breakout = volume > volume_ma10
+
+        buy_condition = ai_confidence & macd_bullish & rsi_ok & price_near_bottom & adx_ok & volume_breakout
         print(f"DEBUG - predicted_close = {predicted_close}")
         print(f"DEBUG - current_price = {current_price}")
         print(f"DEBUG - ai_confidence ={ai_confidence}")
@@ -303,7 +308,7 @@ def live_trading():
         signal_sell = position == 1 and (current_price >= take_profit or current_price <= stop_loss)
         print(f"[DEBUG] Signal buy: {signal_buy}, Signal sell: {signal_sell}")
         print(f"[DEBUG] Position: {position}")
-        if position == 0 and signal_buy:
+        if position == 0 and buy_condition:
             print("===========BUY BTC==========")
             usdt_balance = get_balance_usdt()
             print(f"[DEBUG] usdt_balance: {usdt_balance}")
@@ -317,6 +322,8 @@ def live_trading():
                 # take_profit = buy_price + entry_atr * 2
                 take_profit = min(predicted_close, buy_price + entry_atr * 4)
                 stop_loss = buy_price - entry_atr * 1.5
+                take_profit = min(predicted_close, buy_price + atr[i] * 4)
+                stop_loss = buy_price - atr[i] * 1.5
                 with open(state_path, "w") as f:
                     json.dump({"position": position, "buy_price": buy_price, "take_profit": take_profit, "stop_loss": stop_loss}, f)
                 save_log("BUY", buy_price, usdt_balance)

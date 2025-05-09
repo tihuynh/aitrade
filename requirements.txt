@@ -5,3 +5,7 @@ tensorflow
 scikit-learn
 ta
 pybit
+requests
+yfinance
+python-dotenv
+web3

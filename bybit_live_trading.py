@@ -146,7 +146,7 @@ def get_balance_btc():
 
 def place_order(side, quantity):
     params = {
-        "category": "spot",
+        "category": "spot", 
         "symbol": "BTCUSDT",
         "side": side,
         "orderType": "MARKET",
