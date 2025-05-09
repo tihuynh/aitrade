@@ -192,6 +192,9 @@ def calculate_score(today, yesterday):
 if __name__ == '__main__':
     try:
         today_data = get_index_data()
+        if today_data is None:
+            send_telegram("❌ Lỗi: Không thể lấy dữ liệu thị trường hôm nay. API có thể đang lỗi.")
+            exit(1)
         yesterday_data = load_yesterday_data()
 
         if yesterday_data:
