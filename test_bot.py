@@ -1,3 +1,5 @@
+
+from pybit.unified_trading import HTTP # Thêm dòng này
 # ===== KẾT NỐI API BYBIT =====
 session = HTTP(api_key=API_KEY, api_secret=API_SECRET, testnet=testnet)
 
